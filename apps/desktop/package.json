@@ -1,0 +1,95 @@
+{
+  "name": "@game-share/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GameShare 桌面客户端",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron -c cyan,magenta \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "node scripts/dev-electron.mjs",
+    "build:electron": "node scripts/build-electron.mjs",
+    "build:renderer": "vite build",
+    "build": "npm run build:electron && npm run build:renderer",
+    "dist": "npm run build && electron-builder",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
+    "start": "electron ."
+  },
+  "//": "所有依赖都在 devDependencies：主进程由 esbuild 打包、渲染进程由 vite 打包。唯一的例外是 koffi（原生模块，见 //koffi），它靠 build.extraResources 放进 resources/，不进 asar。这样 electron-builder 只需打包 dist/ 与 dist-electron/，不必处理 workspace 符号链接。",
+  "//koffi": "koffi 是 FFI，只用来把窗口句柄换成 PID（按应用采集声音唯一缺的那一小块，见 electron/audio/win32-window-pid.ts）。刻意留在 devDependencies：它是原生模块，esbuild 打不进 bundle（build-electron.mjs 里标了 external），所以由 build.extraResources 把它连同 @koromix/koffi-win32-x64 一起放到 resources/audio-ffi/。**必须保持 koffi/ 与 @koromix/ 的嵌套相对位置** —— koffi 内部按自身的 ../../../@koromix/koffi-<platform>-<arch> 找二进制，摊平摆就找不到。放进 dependencies 会同时踩 npmRebuild=false（不重建）与零运行时依赖这两条约定。",
+  "//electronVersion": "npm workspace 把 electron 提升到仓库根 node_modules，而 electron-builder 只在本包目录里找 electron 模块，探不到就报 'Cannot compute electron version from installed node modules'。所以 build.electronVersion 必须显式锁定，升级 electron 时同步改这里。也不能写成 build 对象里的 '//xxx' 注释键——electron-builder 的配置 schema 会直接拒绝未知属性。",
+  "//cache": "构建工具缓存目录无法用配置指定：electron-builder 25.x 的 directories 只认 app / buildResources / output（写 cache 会被 schema 直接拒掉），builder-util 也只读环境变量 ELECTRON_BUILDER_CACHE（没有 npm_config_ 前缀回退，所以写在 .npmrc 里一样无效）。默认位置 %LOCALAPPDATA%\\electron-builder\\Cache 在本机是空的，会害它联网去 github.com 下载 winCodeSign 而吃到 502 —— 症状是打包在 rcedit 阶段突然失败、报 winCodeSign-2.6.0.7z Bad Gateway，看着像网络问题，其实是缓存路径问题。所以打包统一走 `npm run build:exe`，由 scripts/build-exe.mjs 预设 ELECTRON_BUILDER_CACHE=E:/electron-builder-cache（完整缓存在那里）。",
+  "//npmRebuild": "build.npmRebuild 必须为 false。默认值下 electron-builder 会在 appDir 里跑 `npm install --production`，而 appDir 是 npm workspace 的成员，npm 会把它当仓库根处理 —— 结果是根 node_modules 里的 devDependencies 被整体剪掉（含 electron-builder 自己的 app-builder-bin），紧接着打包就因为找不到 app-builder.exe 而崩，报 `spawn ... app-builder.exe ENOENT`。本项目主进程与渲染进程全部被打包、运行时零依赖，也没有原生模块要 rebuild，这一步本来就没有存在的必要。",
+  "devDependencies": {
+    "@game-share/protocol": "*",
+    "@game-share/shared": "*",
+    "@game-share/signaling": "*",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^43.7.2",
+    "electron-builder": "^25.1.8",
+    "koffi": "^3.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io-client": "^4.8.1",
+    "vite": "^6.0.7"
+  },
+  "//extraResources": "build.extraResources 把 tools/cloudflared.exe（52.4MB）放进安装包的 resources/，由 electron/tunnel.ts 用 process.resourcesPath 定位 —— 它是异地访问隧道的唯一实现（本机双层 NAT，公网 IPv6 实测不通）。代价是安装包从 ~78MB 涨到 ~130MB，这是为「对方什么都不用装」付的。注意：这条说明必须留在顶层，写成 build 对象里的 \"//extraResources\" 会被 electron-builder 的 schema 判为未知属性、整个打包直接失败（2026-09-17 踩过）。",
+  "build": {
+    "appId": "com.gameshare.desktop",
+    "productName": "GameShare",
+    "electronVersion": "43.7.2",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../tools/cloudflared.exe",
+        "to": "cloudflared.exe"
+      },
+      {
+        "from": "../../node_modules/koffi",
+        "to": "audio-ffi/node_modules/koffi",
+        "filter": [
+          "package.json",
+          "index.cjs",
+          "index.js",
+          "indirect.cjs",
+          "indirect.js",
+          "index.d.ts",
+          "src/**/*.cjs",
+          "src/**/*.js",
+          "src/**/*.inc",
+          "src/**/*.h",
+          "src/**/*.hh"
+        ]
+      },
+      {
+        "from": "../../node_modules/@koromix/koffi-win32-x64",
+        "to": "audio-ffi/node_modules/@koromix/koffi-win32-x64",
+        "filter": [
+          "package.json",
+          "index.js",
+          "win32_x64/koffi.node"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

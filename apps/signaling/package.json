@@ -1,0 +1,31 @@
+{
+  "name": "@game-share/signaling",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "//entry": "main/types/exports 都指向 embed.ts（不是 index.ts）：index.ts 是进程入口，被 import 就会自动开服，不能当库入口。桌面客户端把它打进主进程内嵌运行。可执行产物仍是 dist/index.js，由 npm start 引用。",
+  "main": "./src/embed.ts",
+  "types": "./src/embed.ts",
+  "exports": {
+    ".": {
+      "types": "./src/embed.ts",
+      "default": "./src/embed.ts"
+    }
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=esm --external:socket.io --sourcemap --outfile=dist/index.js",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --sourcemap --external:bufferutil --external:utf-8-validate --outfile=dist/standalone/signaling-server.cjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@game-share/protocol": "*",
+    "@game-share/shared": "*",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2"
+  }
+}

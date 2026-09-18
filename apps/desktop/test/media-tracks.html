@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>GameShare 三轨媒体结构验收</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #0f1115;
+        color: #e6e9ef;
+        font: 12px/1.55 'Consolas', 'Microsoft YaHei', monospace;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px;
+      }
+      #status {
+        flex: 1;
+        overflow: auto;
+        padding: 8px 10px;
+        border: 1px solid #262b36;
+        border-radius: 6px;
+        background: #171a21;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">初始化…</div>
+    <script src="./dist/media-tracks.js"></script>
+  </body>
+</html>

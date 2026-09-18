@@ -1,0 +1,13 @@
+# Windows 项目：统一用 LF 管理，bat 强制 CRLF（cmd 解析 LF 的 bat 在部分场景会出错）
+* text=auto
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制产物不参与文本处理
+*.exe binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.7z binary
+*.asar binary

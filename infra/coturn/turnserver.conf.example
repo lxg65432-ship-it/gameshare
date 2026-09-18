@@ -1,0 +1,33 @@
+# coturn 配置示例 —— M8 阶段部署时使用。
+# 复制为 turnserver.conf，替换全部 <占位符> 后按需调整。
+#
+# 单台 VPS 同时跑 Node 信令服务 + coturn（规格文档第 12 节）。
+# 第一版不做数据库、不做转码、不落盘视频。
+
+listening-port=3478
+tls-listening-port=5349
+
+# VPS 公网 IP。多网卡或 NAT 环境下这个字段必须正确，
+# 否则 coturn 会在 Allocate 响应里返回内网地址，导致中继必然失败。
+external-ip=<公网IP>
+
+realm=<域名或公网IP>
+
+# 长期凭证机制
+lt-cred-mech
+user=<用户名>:<强密码>
+
+# 中继端口范围。需要在云厂商安全组与系统防火墙同时放行，
+# 只放行 3478 是常见踩坑点 —— 中继数据走的是这段 UDP 端口。
+min-port=49152
+max-port=65535
+
+no-multicast-peers
+no-cli
+
+# 禁止把中继能力开放给公网任意使用者
+# （配合 use-auth-secret 或明确白名单更佳，见 docs/ARCHITECTURE.md）
+
+log-file=/var/log/coturn/turnserver.log
+simple-log
+verbose

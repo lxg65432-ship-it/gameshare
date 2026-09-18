@@ -1,0 +1,43 @@
+{
+  "name": "game-share",
+  "version": "1.0.0",
+  "private": true,
+  "description": "轻量级 Windows 多人游戏画面共享工具（WebRTC P2P Mesh）",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:signaling": "npm run dev -w @game-share/signaling",
+    "dev:desktop": "npm run dev -w @game-share/desktop",
+    "serve": "node scripts/start-signaling.mjs",
+    "postinstall": "node scripts/ensure-electron.mjs",
+    "build": "npm run build -w @game-share/signaling && npm run build -w @game-share/desktop",
+    "bundle:signaling": "npm run bundle -w @game-share/signaling",
+    "build:exe": "node scripts/build-exe.mjs",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "smoke": "node scripts/smoke-signaling.mjs",
+    "smoke:p2p": "node scripts/smoke-p2p.mjs",
+    "smoke:all": "npm run smoke && npm run smoke:p2p",
+    "check:embedded": "node scripts/check-embedded-server.mjs",
+    "check:app-audio": "node scripts/run-electron.cjs scripts/check-app-audio.cjs",
+    "check:media-tracks": "node scripts/check-media-tracks.mjs",
+    "check:topmost": "node scripts/run-electron.cjs scripts/check-topmost.cjs",
+    "check:tiles": "node scripts/run-electron.cjs scripts/check-float-tiles.cjs",
+    "check:standalone": "node scripts/check-standalone.mjs",
+    "check:network": "node scripts/check-network.mjs",
+    "check:stun": "node scripts/check-stun-chromium.mjs",
+    "check:tunnel": "node scripts/check-tunnel.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "esbuild": "^0.24.2",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0"
+  }
+}

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>GameShare P2P 验收</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #0f1115;
+        color: #e6e9ef;
+        font: 12px/1.5 'Consolas', 'Microsoft YaHei', monospace;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 6px;
+      }
+      #status {
+        flex-shrink: 0;
+        padding: 6px 8px;
+        border: 1px solid #262b36;
+        border-radius: 6px;
+        background: #171a21;
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+      #status b {
+        color: #4c8dff;
+      }
+      #status .ok {
+        color: #37c07a;
+      }
+      #status .bad {
+        color: #e5645c;
+      }
+      #stage {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        gap: 6px;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      }
+      .tile {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid #262b36;
+        border-radius: 6px;
+        background: #05070a;
+      }
+      .tile video {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+        background: #05070a;
+      }
+      .tile__label {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        padding: 3px 6px;
+        background: linear-gradient(rgba(0, 0, 0, 0.75), transparent);
+        font-size: 11px;
+      }
+      .tile__stats {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        right: 0;
+        padding: 3px 6px;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+        font-size: 10.5px;
+        color: #cfd5e0;
+      }
+      .tile--connected {
+        border-color: rgba(55, 192, 122, 0.45);
+      }
+      .tile--failed,
+      .tile--disconnected {
+        border-color: rgba(229, 100, 92, 0.5);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">初始化…</div>
+    <div id="stage"></div>
+    <script src="./dist/harness.js"></script>
+  </body>
+</html>

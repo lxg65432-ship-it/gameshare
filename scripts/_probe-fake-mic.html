@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>假麦克风探针</title>
+  </head>
+  <body>
+    <script>
+      /*
+       * 只回答一个问题：`--use-file-for-fake-audio-capture` 喂进去的那条麦克风轨，
+       * 频谱上到底有哪些频率。
+       *
+       * 背景：结构轮里「0 号的 voice 里没有应用声音」一直红，读数是
+       * voice 上 1200Hz 与 440Hz 几乎同高（都 -85），而本底是 -124 —— 也就是
+       * 那条轨里**真的有两个音**。要分清是「喂进去的 WAV 里就有 440」
+       * 还是「远端链路串了音」，只能把麦克风单独拎出来量一次。
+       *
+       * 结论会带在 report 的 note 里，外层脚本负责打印。
+       */
+
+      const bridge = window.harnessBridge;
+      const params = new URLSearchParams(location.search);
+      /** 这一轮喂进去的 WAV 频率（期望它出现） */
+      const EXPECT = Number(params.get('expect') ?? '0');
+      /** 老假设备自带的那一声 440（Chromium 内置假音频的默认音） */
+      const SUSPECT = 440;
+      const MS = Number(params.get('ms') ?? '2500');
+      const TOP_N = 12;
+
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      async function measure(track, ms) {
+        const ctx = new AudioContext();
+        const src = ctx.createMediaStreamSource(new MediaStream([track]));
+        const an = ctx.createAnalyser();
+        an.fftSize = 8192;
+        an.smoothingTimeConstant = 0;
+        src.connect(an);
+        // 必须有 sink 才算「有人消费这条轨」，否则读数全是 -inf
+        const silent = ctx.createGain();
+        silent.gain.value = 0;
+        an.connect(silent).connect(ctx.destination);
+
+        const bins = new Float32Array(an.frequencyBinCount);
+        const frames = [];
+        const t0 = performance.now();
+        while (performance.now() - t0 < ms) {
+          await sleep(60);
+          an.getFloatFrequencyData(bins);
+          frames.push(Float32Array.from(bins));
+        }
+
+        // 逐帧中位数（与验收页同一套）：一次瞬态会把全频段同时抬起来
+        const med = (i) => {
+          const col = frames.map((f) => f[i]).sort((a, b) => a - b);
+          return col[col.length >> 1];
+        };
+        const spec = new Float32Array(bins.length);
+        let max = -Infinity;
+        for (let i = 0; i < bins.length; i += 1) {
+          spec[i] = med(i);
+          if (spec[i] > max) max = spec[i];
+        }
+
+        const binHz = ctx.sampleRate / an.fftSize;
+        const peaks = [];
+        for (let i = 2; i < spec.length - 2; i += 1) {
+          const v = spec[i];
+          if (v < -200) continue;
+          if (v >= spec[i - 1] && v >= spec[i + 1] && v > spec[i - 2] && v > spec[i + 2]) {
+            peaks.push({ hz: Math.round(i * binHz), db: v });
+          }
+        }
+        peaks.sort((a, b) => b.db - a.db);
+
+        const sorted = Float32Array.from(spec).sort();
+        const floor = sorted[sorted.length >> 1];
+        const rate = ctx.sampleRate;
+        await ctx.close();
+        return { peaks: peaks.slice(0, TOP_N), floor, max, frames: frames.length, rate, binHz };
+      }
+
+      window.addEventListener('error', (e) => {
+        bridge.log(`页面异常：${e.message}`);
+      });
+
+      async function main() {
+        // 主进程要凑齐 N 个 ready 才放行，少了这一句 waitGo() 会一直等到总超时
+        bridge.ready();
+        await bridge.waitGo();
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          });
+          const track = stream.getAudioTracks()[0];
+          const st = track.getSettings();
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const dev = devices.find((d) => d.deviceId === st.deviceId);
+
+          bridge.log(`设备「${dev ? dev.label : '未知'}」 rate=${st.sampleRate} ch=${st.channelCount}`);
+          const r = await measure(track, MS);
+          bridge.log(
+            `采样率=${r.rate} bin=${r.binHz.toFixed(2)}Hz 帧数=${r.frames} ` +
+              `本底=${r.floor.toFixed(1)} 最强=${r.max.toFixed(1)}`,
+          );
+          bridge.log(
+            `前 ${TOP_N} 个谱峰： ` +
+              r.peaks.map((p) => `${p.hz}Hz@${p.db.toFixed(1)}`).join('  '),
+          );
+
+          const onExpect = r.peaks.find((p) => Math.abs(p.hz - EXPECT) < 30);
+          const onSuspect = r.peaks.find((p) => Math.abs(p.hz - SUSPECT) < 30);
+          bridge.log(
+            `喂进去的 ${EXPECT}Hz：${onExpect ? `${onExpect.db.toFixed(1)} dB` : '不在谱峰里'}；` +
+              `内置假音 ${SUSPECT}Hz：${onSuspect ? `${onSuspect.db.toFixed(1)} dB` : '不在谱峰里'}`,
+          );
+
+          bridge.report({
+            index: 0,
+            ok: true,
+            mode: 'probe-fake-mic',
+            expect: EXPECT,
+            device: dev ? dev.label : null,
+            peaks: r.peaks,
+            floor: r.floor,
+            max: r.max,
+            checks: [],
+          });
+        } catch (err) {
+          bridge.log(`探针失败：${err && err.message ? err.message : err}`);
+          bridge.report({
+            index: 0,
+            ok: false,
+            mode: 'probe-fake-mic',
+            failure: String(err && err.message ? err.message : err),
+            checks: [],
+          });
+        }
+      }
+
+      void main();
+    </script>
+  </body>
+</html>

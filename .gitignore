@@ -1,0 +1,19 @@
+node_modules/
+dist/
+dist-electron/
+release*/
+tools/
+*.log
+.env
+.env.local
+.DS_Store
+.vite/
+_probe.js
+# 验收脚本自己生成的中转产物（check:float-tiles 把待测模块打包到这里）
+.cache/
+# 工作区内部记忆与交接文档（含个人称谓与开发日志，绝不入库）
+.workbuddy/
+# 本机临时探测脚本（_probe-fake-mic / _probe-audio-tone 是验收资产的例外，入库）
+scripts/_probe-clipboard.cjs
+# 诊断脚本自己的输出
+diag-*.log

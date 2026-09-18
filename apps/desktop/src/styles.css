@@ -1,0 +1,1749 @@
+:root {
+  --bg: #0f1115;
+  --bg-panel: #171a21;
+  --bg-input: #0b0d11;
+  --border: #262b36;
+  --border-strong: #363d4b;
+  --text: #e6e9ef;
+  --text-dim: #8b93a5;
+  --accent: #4c8dff;
+  --accent-hover: #5f9bff;
+  --ok: #37c07a;
+  --warn: #e8b13a;
+  --err: #e5645c;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---------------- header ---------------- */
+
+/* 顶栏压到 44px 左右：它是固定的，每省 10px 都是首屏能多放一行内容 */
+.app__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.app__title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.app__logo {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(140deg, var(--accent), #7b5cff);
+  color: #fff;
+  font-size: 14px;
+}
+
+.app__title h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.app__subtitle {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-input);
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.status__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.status--connected {
+  border-color: rgba(55, 192, 122, 0.35);
+  color: var(--ok);
+}
+.status--connected .status__dot {
+  background: var(--ok);
+  box-shadow: 0 0 8px rgba(55, 192, 122, 0.8);
+}
+
+.status--connecting {
+  color: var(--warn);
+}
+.status--connecting .status__dot {
+  background: var(--warn);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.status--disconnected {
+  border-color: rgba(229, 100, 92, 0.35);
+  color: var(--err);
+}
+.status--disconnected .status__dot {
+  background: var(--err);
+}
+
+.status__rtt {
+  padding-left: 7px;
+  border-left: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 顶栏右侧的一组控件：浮窗置顶开关 + 连接状态 */
+.app__header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 做成胶囊形，和旁边的连接状态观感一致 —— 它俩是同一层的窗口级开关 */
+.switch--boxed {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-input);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---------------- body ---------------- */
+
+.app__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(252px, 300px) 1fr;
+  gap: 10px;
+  padding: 10px 14px;
+  overflow: hidden;
+}
+
+.app__side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.app__stage {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 980px) {
+  .app__body {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  align-self: start;
+  width: 100%;
+}
+
+/* 折叠类面板：收起时只剩一行，不留底部空白 */
+.panel--tight {
+  gap: 7px;
+  padding: 8px 10px;
+}
+
+.panel h2 {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+/* ---------------- 折叠行 ---------------- */
+
+.collapse__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 20px;
+}
+
+.collapse__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.collapse__toggle:hover {
+  color: var(--accent);
+}
+
+.collapse__caret {
+  flex-shrink: 0;
+  width: 10px;
+  color: var(--text-dim);
+  font-size: 9px;
+}
+
+.collapse__state {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.collapse__body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.dot--ok {
+  background: var(--ok);
+}
+
+.dot--idle {
+  background: var(--warn);
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.switch input:disabled {
+  cursor: not-allowed;
+}
+
+/* 局域网地址：user-select: all 让一次点击就能整段选中，方便复制到另一台 */
+.serverurl {
+  margin: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 11.5px;
+  word-break: break-all;
+  user-select: all;
+}
+
+/* 异地地址比局域网地址更值得注意，用强调色描边把它和其他地址区分开 */
+.serverurl--remote {
+  border-color: var(--accent);
+  font-weight: 500;
+}
+
+/* 公网候选地址：多数网络连不上，视觉上要明显弱于隧道地址 */
+.serverurl--dim {
+  color: var(--text-dim);
+  font-weight: 400;
+  border-style: dashed;
+}
+
+/* ---------------- 异地访问隧道 ---------------- */
+
+/* 单独框一块：它是唯一实测能跨网络的一条路，不该混在地址清单里 */
+.tunnel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(76, 141, 255, 0.35);
+  border-radius: 9px;
+  background: rgba(76, 141, 255, 0.08);
+}
+
+.tunnel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tunnel__title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* ---------------- 表单 ---------------- */
+
+.field__input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.field__input:focus {
+  border-color: var(--accent);
+}
+
+.field__input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.field__input--compact {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.field__input--code {
+  flex: 0 1 84px;
+  min-width: 0;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 13px;
+  letter-spacing: 2px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* ---------------- 按钮 ---------------- */
+
+.btn {
+  padding: 7px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: #21262f;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  background: #2a303b;
+  border-color: #454d5e;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 500;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: transparent;
+}
+
+.btn--ghost {
+  background: transparent;
+}
+
+.btn--tiny {
+  padding: 2px 8px;
+  font-size: 11.5px;
+  border-radius: 6px;
+}
+
+/* 房间码那两个按钮（复制 / 复制邀请）在按下后会换成「已复制」三个字。
+   字数一变宽度就跳，旁边那个按钮跟着左右晃一下 —— 卡住最小宽度就稳了。 */
+.roomcode .btn--tiny {
+  min-width: 64px;
+}
+
+/* 复制成功的短暂反馈。剪贴板是看不见的，不给一点动静用户没法判断成没成，
+   只会以为按钮还是坏的（见 App.tsx 里 flashCopied 那段说明）。 */
+.btn--done {
+  border-color: rgba(60, 190, 120, 0.55);
+  background: rgba(60, 190, 120, 0.16);
+  color: #4fd08a;
+}
+
+/* 并排时不参与拉伸的那个按钮 —— 一行里只让主操作占满剩余宽度 */
+.btn--shrink {
+  flex: 0 0 auto;
+}
+
+.btn--danger {
+  border-color: rgba(229, 100, 92, 0.5);
+  background: rgba(229, 100, 92, 0.14);
+  color: #ff8a7f;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: rgba(229, 100, 92, 0.24);
+  border-color: rgba(229, 100, 92, 0.7);
+}
+
+/* ---------------- 其他 ---------------- */
+
+.hint {
+  margin: 0;
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hint--dim {
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.hint--warn {
+  color: var(--warn);
+}
+
+/* 并排一行：输入框和主按钮各占一半，固定宽度的按钮不参与拉伸 */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.row > .field__input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.row > .btn:not(.btn--shrink) {
+  flex: 1 1 0;
+}
+
+/* ---------------- 风险提示 ---------------- */
+
+/* 反作弊那条提示不能长得像普通 hint：它需要被一眼看到，所以给个有边框的块。
+   默认收成一行按钮，点开才铺开说明。 */
+.notice__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 9px;
+  border: 1px solid rgba(232, 177, 58, 0.28);
+  border-radius: 7px;
+  background: rgba(232, 177, 58, 0.07);
+  color: var(--warn);
+  font-family: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notice__body {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(232, 177, 58, 0.28);
+  border-radius: 7px;
+  background: rgba(232, 177, 58, 0.07);
+  color: var(--warn);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.roomcode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--bg-input);
+}
+
+.roomcode__value {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  color: var(--accent);
+}
+
+.badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #232833;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.members {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.member {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #14171d;
+  font-size: 12px;
+}
+
+.member__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member__self {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.member__tags {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.tag {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.tag--host {
+  background: rgba(76, 141, 255, 0.16);
+  color: var(--accent);
+}
+
+.tag--live {
+  background: rgba(229, 100, 92, 0.18);
+  color: #ff8a7f;
+}
+
+.tag--screen {
+  background: rgba(123, 92, 255, 0.18);
+  color: #a893ff;
+}
+
+.tag--window {
+  background: rgba(139, 147, 165, 0.16);
+  color: var(--text-dim);
+}
+
+.tag--warn {
+  background: rgba(232, 177, 58, 0.18);
+  color: var(--warn);
+}
+
+.tag--link-new,
+.tag--link-connecting {
+  background: rgba(232, 177, 58, 0.14);
+  color: var(--warn);
+}
+
+.tag--link-connected {
+  background: rgba(55, 192, 122, 0.14);
+  color: var(--ok);
+}
+
+.tag--link-disconnected,
+.tag--link-failed,
+.tag--link-closed {
+  background: rgba(229, 100, 92, 0.14);
+  color: var(--err);
+}
+
+/* ---------------- 采集源列表 ---------------- */
+
+.sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.source__btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #14171d;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.source__btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+/* 共享中换源时，把正在共享的那个标出来，免得用户猜「我现在发的到底是哪个」 */
+.source__btn--active {
+  border-color: var(--accent);
+  background: rgba(76, 141, 255, 0.12);
+}
+
+.source__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.source__thumb {
+  flex-shrink: 0;
+  width: 48px;
+  height: 27px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #0b0d11;
+}
+
+.source__thumb--empty {
+  display: block;
+  border: 1px dashed var(--border-strong);
+}
+
+.source__name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ---------------- 画面区 ---------------- */
+
+.stage__empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  color: var(--text-dim);
+}
+
+.stage__empty p {
+  margin: 0;
+}
+
+.grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-auto-rows: minmax(160px, 1fr);
+  gap: 8px;
+}
+
+/* 放大布局：主画面吃满，其余几路横排成缩略条 */
+.stage--focused {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.stage__main {
+  min-height: 0;
+  display: flex;
+}
+
+.stage__main > .tile {
+  flex: 1;
+  min-width: 0;
+}
+
+.stage__strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+/* 缩略条里的每一格固定尺寸：不固定的话会把主画面挤扁 */
+.stage__strip > .tile {
+  flex: 0 0 auto;
+  width: 168px;
+  height: 95px;
+}
+
+.tile {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #05070a;
+  user-select: none;
+}
+
+.tile--connected {
+  border-color: rgba(55, 192, 122, 0.4);
+}
+
+.tile--failed,
+.tile--disconnected {
+  border-color: rgba(229, 100, 92, 0.45);
+}
+
+/* 放大中的那一路描一圈强调色，切回去时也能看出刚才放大的是谁 */
+.tile--focused {
+  border-color: var(--accent);
+}
+
+.tile--clickable {
+  cursor: pointer;
+}
+
+.tile__video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: #05070a;
+}
+
+.tile__placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  background: repeating-linear-gradient(
+    45deg,
+    #0b0e13,
+    #0b0e13 10px,
+    #0d1117 10px,
+    #0d1117 20px
+  );
+}
+
+.tile__header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  background: linear-gradient(rgba(0, 0, 0, 0.72), transparent);
+  font-size: 12px;
+}
+
+.tile__title {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+/* 放大 / 还原：和静音开关同排，同样低调；正处于放大状态时用强调色标出来 */
+.tile__act {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: rgba(15, 17, 21, 0.72);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.tile__act:hover {
+  border-color: var(--accent);
+}
+
+.tile__act--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 静音开关：默认低调，静音时变红，扫一眼就知道哪几路被关了 */
+.tile__mute {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: rgba(15, 17, 21, 0.72);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.tile__mute:hover {
+  border-color: var(--accent);
+}
+
+.tile__mute--off {
+  border-color: rgba(229, 100, 92, 0.6);
+  color: #ff8a7f;
+}
+
+/* ---------------- 分轨音量（阶段四） ---------------- */
+
+/* 「音量」按钮与展开的小面板。面板向上弹，别盖住画面主体 */
+.tile__volwrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tile__volpanel {
+  position: absolute;
+  bottom: 26px;
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 200px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: rgba(13, 15, 19, 0.96);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+}
+
+.tile__volrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.tile__volrow > span {
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.tile__volrow input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.tile__voldown {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: #ff8a7f;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* ---------------- 共享声音模式选择（阶段四） ---------------- */
+
+.row--modes {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn--mode {
+  padding: 3px 11px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+/* 选中态：描边 + 浅色底，跟 .tile__act--on 同一语言 */
+.btn--mode-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(76, 141, 255, 0.12);
+}
+
+/* ---------------- 音频采集失败告警（阶段四） ---------------- */
+
+.audio-failure {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(232, 177, 58, 0.55);
+  border-radius: 9px;
+  background: rgba(232, 177, 58, 0.08);
+}
+
+.audio-failure__title {
+  margin: 0 0 4px;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+.tile__footer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 7px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
+  color: #cfd5e0;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- 日志 ---------------- */
+
+.logs {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-input);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+/* 折叠展开后的日志给个固定上限，否则几十行会把左侧面板撑得比屏幕还高 */
+.logs--short {
+  flex: 0 0 auto;
+  max-height: 190px;
+}
+
+.logs__line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: #333a47;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #454d5e;
+}
+
+/* ---------------- 浮窗模式 ----------------
+ *
+ * 目标：全屏游戏时把客户端缩成一小块压在上面，只留画面。
+ * 三件事一起做 —— 藏掉侧栏与自家顶栏、格子跟着窗口等比缩、标签鼠标碰上才出。
+ *
+ * **窗口本身不加 transparent**：Windows 上透明窗口的 resize 有已知问题，
+ * 而「自由缩放」正是这个功能的硬需求。透明度一律交给主进程的 win.setOpacity()。
+ */
+
+/* 顶栏和侧栏一起收掉。原生标题栏保留 —— 拖窗口、拖边框改大小都靠它。 */
+.app--float .app__header,
+.app--float .app__side {
+  display: none;
+}
+
+.app--float .app__body {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 4px;
+}
+
+.app--float .app__stage {
+  position: relative;
+  min-width: 0;
+}
+
+/* 浮窗里的网格行列数由 JS 算好、inline 写进 style（见 pickFloatGrid），
+   所以这里只负责铺满，不设任何最小尺寸 —— 设了就会在大窗口下提前重排、
+   在小窗口下撑破容器。 */
+.floatgrid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.app--float .tile {
+  border-radius: 5px;
+}
+
+/* 标签和底部统计默认隐形，鼠标移到那一格才出。
+   玩游戏时鼠标在游戏里，所以正常情况下浮窗上不会挂着一排字挡画面。 */
+.app--float .tile__header,
+.app--float .tile__footer {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.app--float .tile:hover .tile__header,
+.app--float .tile:hover .tile__footer,
+.app--float .tile:focus-within .tile__header,
+.app--float .tile:focus-within .tile__footer {
+  opacity: 1;
+}
+
+.app--float .tile__title,
+.app--float .tile__header .tag,
+.app--float .tile__act,
+.app--float .tile__mute,
+.app--float .tile__footer {
+  font-size: 11px;
+}
+
+.app--float .tile__footer {
+  padding: 3px 6px;
+}
+
+/* 放大态在浮窗里：底边缩略条按浮窗的尺度来，
+   常规模式那个固定 168x95 会占掉浮窗一大半高度。 */
+.stage--float .stage__strip {
+  gap: 4px;
+}
+
+.stage--float .stage__strip > .tile {
+  width: 96px;
+  height: 54px;
+}
+
+/* ---------------- 浮窗的控件入口（常驻） ----------------
+ *
+ * 浮窗是给人挂在游戏上面的，所以这块必须**小**；但它又绝不能藏起来 ——
+ * 藏起来的结果就是「想退出浮窗只能记快捷键」（2026-09-18 实机反馈原话）。
+ * 常驻的半透明小方块 + 一条点开才出来的控件条，是同时满足这两条的最简写法。
+ */
+.floatmenu {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  /* 宽度定住：「控件」和「收起」两个字一样宽，点的时候按钮不会左右跳 */
+  min-width: 52px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(12, 14, 19, 0.62);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  /* 常驻但不抢眼：一眼能看见它在那儿，鼠标一上去就变实 */
+  opacity: 0.55;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.floatmenu:hover,
+.floatmenu--open {
+  opacity: 1;
+  border-color: var(--border-strong);
+}
+
+.floatmenu--open {
+  border-color: var(--accent);
+}
+
+/* 三条横线用元素画，不用「☰」这类字符：那类字符的字体回退不可控，
+   换个系统可能变成一个方框（`.bar__grip` 那条注释同理） */
+.floatmenu__lines {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 10px;
+  height: 8px;
+}
+
+.floatmenu__lines > span {
+  height: 1.5px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+/**
+ * 浮窗那条控件。**由左上角的 `.floatmenu` 开关**，不再跟鼠标 hover 走。
+ *
+ * 改成开关有两个理由，都是被反馈逼出来的：
+ * ① 「只在 hover 时才出现」等于没有 —— 用户不知道有这个条，只能去记快捷键；
+ * ② hover 出来的东西收不掉：点了「收起」而鼠标还在窗口里，下一秒它又浮出来，
+ *    看着像按钮坏了。
+ *
+ * 位置也从居中改成**贴右上角**：左上角让给那个常驻小方块，居中的话窄窗里
+ * 会被 `max-width` 夹到跟方块叠在一起。
+ */
+.floatbar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  /* 窗口被拖到最窄（260px）时这一条放不下，让它折行——
+     否则末尾的「退出浮窗」会被裁在窗口外，点开却看不见，白点一下 */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  /* 左边界必须留在入口小方块（左上角，宽 52 + 让 4）右边 —— 窄窗里这一条
+     要是压到它上面，那个开关就点不着了，而条上没有第二个收起入口
+     （判据见 `check:tiles` 第 8 组：两者矩形不许相交） */
+  max-width: calc(100% - 72px);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(12, 14, 19, 0.9);
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+/* 点开之后常驻，不跟 hover 走 */
+.floatbar--pinned {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.floatbar__label,
+.floatbar__value {
+  color: var(--text-dim);
+}
+
+.floatbar__value {
+  min-width: 30px;
+  font-variant-numeric: tabular-nums;
+}
+
+.floatbar__range {
+  width: 84px;
+  accent-color: var(--accent);
+}
+
+.floatbar__exit {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.floatbar__exit:hover {
+  border-color: var(--border-strong);
+}
+
+.floatbar__exit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------------- 浮窗的拖动区与缩放手柄 ----------------
+ *
+ * 浮窗是 `setFocusable(false)` 的窗口（碰它不该把游戏的焦点抢走），而系统的标题栏拖动、
+ * 边框缩放**都会先把窗口激活** —— 在非激活窗口上这两条路都不成立，表现就是「浮窗拖不动」。
+ * 所以拖动与缩放全部自绘、走 IPC 让主进程 setBounds（实现见 src/float-drag.ts）。
+ *
+ * 拖动区就是**整块画面区**：这个窗口里最抓得住的地方就是画面本身。
+ * 控件（按钮、滑杆）在 JS 里被排除掉了，鼠标形状这里跟着改回来。
+ */
+.app--float .app__stage {
+  cursor: move;
+  /* 拖画面时别把房间码、状态标签选成一片蓝 */
+  user-select: none;
+}
+
+.app--float .app__stage button,
+.app--float .app__stage input[type='range'] {
+  cursor: pointer;
+}
+
+.floatgrip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  z-index: 6;
+  cursor: nwse-resize;
+  /* 常驻半透明，不再 hover 才露头 —— 自绘控件没人试过就等于不存在，
+     和左上角那个 `.floatmenu` 是同一条理由 */
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 3px,
+    var(--border-strong) 3px 4px
+  );
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+.floatgrip:hover {
+  opacity: 1;
+}
+
+/* ---------------- 拆分模式：主窗口收成的那条控制条 ---------------- */
+
+/**
+ * 拆分后主窗口被主进程收成一条贴屏幕底部的窄控制条（主进程给的 620x76）。
+ *
+ * 它不能省，也不能关：**画面和声音都还在这个窗口里**（小窗拿不到媒体轨道，
+ * 见 float-tiles.ts 顶部），它同时是「声音 + 房间码 + 合并按钮」。
+ * 所以这里是常驻可见的，不像浮窗那个悬浮条要靠 hover 才浮出来 ——
+ * 一条只为控件而存在的条，再把控件藏起来就本末倒置了。
+ */
+.hostbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 2px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.hostbar__code {
+  flex: none;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hostbar__hint,
+.hostbar__label,
+.hostbar__value {
+  color: var(--text-dim);
+}
+
+/* 会随人数/窗数变长的那一段，允许被压扁 —— 房间码和按钮不能被挤掉 */
+.hostbar__hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.hostbar__range {
+  flex: none;
+  width: 72px;
+  accent-color: var(--accent);
+}
+
+.hostbar__value {
+  flex: none;
+  min-width: 30px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hostbar__act {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.hostbar__act:hover {
+  border-color: var(--border-strong);
+}
+
+.hostbar__act--primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hostbar__act:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/**
+ * 画面留在这层继续播 —— 声音从这里出，帧泵也从这里抽帧。
+ *
+ * 收掉视觉只用 `opacity: 0`：**别换 `display: none`**，那会让这层整个退出布局。
+ *
+ * （2026-09-17 复跑探针：合成源下连 `display: none` 都照样出帧，所以这条是**保守选择**
+ * 而不是实测结论；真实解码源没验过，而 `opacity: 0` 在任何情况下都成立，别去换。）
+ */
+.hostbar__videos {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 「把整条收掉」那个动作。与其余按钮同款，只是窄一点 —— 它是视图操作，
+   不该和「合并成一个窗口 / 退出浮窗」那两个出口长得一样重要。 */
+.hostbar__collapse {
+  padding: 3px 7px;
+}
+
+/* ---------------- 拆分模式：收起后的那颗球（152x40） ----------------
+ *
+ * 主进程把窗口缩到 152x40（float-tiles.ts 的 `ballBounds`），所以这层的尺寸
+ * **就是整扇窗口**，于是胶囊直接铺满、不留边距：窗口矩形与胶囊重合，
+ * 四角的窗口背景（`--bg`，和这里同一个色系）露出来也看不出来。
+ * 想让四角真的透明得让窗口 `transparent: true`，那会影响整个浮窗模式，不值得。
+ *
+ * 整块都是拖动区（`.app__stage` 在收起态挂着 `floatBallProps`），
+ * 所以**这层里一个 `pointer-events: auto` 的控件都不能有** —— 谁接住鼠标，
+ * 谁那块就拖不动。展开是「按位移判点击」实现的，不需要按钮。
+ */
+.hostball {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--bg-panel);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.hostball:active {
+  cursor: grabbing;
+}
+
+/* 一个「在跑着」的小信号灯：球收起来了，但共享还在继续 —— 得看得出来是活的 */
+.hostball__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.hostball__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+
+/* 纯文字、不冒充按钮：整颗球点哪儿都是展开，做成按钮反而暗示「只有这儿能点」 */
+.hostball__expand {
+  flex: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------------- 小窗（拆分模式下的单路浮窗） ---------------- */
+
+/**
+ * 小窗只有画面，没有任何系统边框（主进程建窗时 `frame: false`）。
+ *
+ * 拖动与缩放在页面里自绘 —— 系统的窗口拖动/边框缩放都会**先激活窗口**，
+ * 而小窗是刻意做成不可激活的（碰它不该把游戏弄失焦，与主浮窗同一条理由）。
+ */
+.tilewin {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  cursor: move;
+  /* 拖窗时别把画面选成蓝色的文本选区 */
+  user-select: none;
+}
+
+.tilewin__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tilewin__wait {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* 悬浮条：默认隐形，鼠标进小窗才浮出来。
+   条里只剩静音按钮了（名字已经挪出去常驻），所以靠右排。 */
+.tilewin__bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 3px 6px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
+  font-size: 11px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.tilewin__bar--on {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/**
+ * 名字牌：**常驻**，贴左上角，鼠标不进小窗也看得见。
+ *
+ * 常驻的代价是压住一小块画面，所以三条都得守：
+ *   - 半透明深底 + 文字阴影 —— 底下是随时在变的游戏画面，纯文字读不出来；
+ *   - **不吃指针事件** —— 小窗整面都是拖动区（`.tilewin` 的 pointerdown），
+ *     名字牌要是接住那一下，正好从它上面开始拖就拖不动了；
+ *   - **不用 `backdrop-filter`** —— 小窗画面是每帧重绘的 canvas，加背景模糊
+ *     等于每帧多一次全窗重采样，为一行名字不值。
+ */
+.tilewin__name {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* 右边留 20px：长名字铺满整条顶部会像在画面上盖了一条横幅 */
+  max-width: calc(100% - 20px);
+  padding: 2px 9px;
+  border-bottom-right-radius: 7px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 这一路被静音时名字牌跟着变色。它现在是常驻的，而静音状态只在 hover 的
+   条里露出来 —— 画面在动却没声音，人会先去怀疑画面，不会去怀疑那个开关。 */
+.tilewin__name--muted {
+  background: rgba(64, 36, 0, 0.72);
+  color: var(--warn);
+}
+
+.tilewin__mute {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(12, 14, 19, 0.9);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tilewin__mute--on {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/**
+ * 缩放手柄。
+ *
+ * 窗口没有系统边框，改大小只能自己画一个；而且**必须有个看得见的东西** ——
+ * 否则用户根本不会知道小窗能拖大（Fitts 定律在这里没用，问题是没人会去试）。
+ */
+.tilewin__grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 3px,
+    var(--border-strong) 3px 4px
+  );
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+.tilewin__grip--on {
+  opacity: 1;
+}
+
+/* ================================================================== *
+ * 无边框窗口（2026-09-17 第八批）
+ *
+ * 主窗口改成 `frame: false` 了，原来由系统免费提供的两样东西要自己补：
+ *   1. 顶栏得是一条拖动区（`-webkit-app-region: drag`）；
+ *   2. 右上角的最小化 / 最大化 / 关闭得自己画（`.winctl`，见 App.tsx）。
+ *
+ * 为什么去掉原生边框：浮窗模式下窗口刻意 `setFocusable(false)`，
+ * 而原生标题栏拖动与边框缩放都要先激活窗口 —— 在不可激活的窗口上那圈边框是
+ * 一块「看着能拖、实际拖不动」的死角，用户拖它得到的结论是「浮窗拖不动」。
+ * 去掉之后整窗都是页面，浮窗的拖动/缩放全走自绘（float-drag.ts），与激活无关。
+ * ================================================================== */
+
+/* 一圈自画的描边。没有原生标题栏之后，压在同色背景（尤其是游戏画面）上
+   会看不出窗口到哪儿为止。用 `outline` 不用 `border`：outline 不参与布局，
+   不会把 header 往下挤 2px。 */
+.app {
+  outline: 1px solid var(--border-strong);
+  outline-offset: -1px;
+}
+
+/* 顶栏整条是拖动区。`cursor` 保持默认别写成 move —— 那是浮窗里
+   「整个画面区都能拖」的提示，常规模式的顶栏只是普通标题栏 */
+.app__header {
+  -webkit-app-region: drag;
+  cursor: default;
+  user-select: none;
+}
+
+/* 拖动区里的控件必须显式退出拖动区：`-webkit-app-region` 会作用到子元素上，
+   不写这几条的话浮窗开关点不动、状态文字也选不中 */
+.app__header-right,
+.app__header button,
+.app__header input,
+.app__header select,
+.app__header textarea,
+.app__header label,
+.app__header a {
+  -webkit-app-region: no-drag;
+}
+
+/* ---------------- 顶栏右侧的窗口按钮 ---------------- */
+
+.winctl {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+}
+
+.winctl__btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.winctl__btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text);
+}
+
+/* 关闭键整块变红，跟系统标题栏一致 —— 三格里它最容易被误点 */
+.winctl__btn--close:hover {
+  background: var(--err);
+  color: #fff;
+}
+
+/* 图标一律用 1px 线画出来，不用 × − □ 这些 unicode 字符：
+   不同字体下它们的大小和基线对不齐，三个按钮看着不一样高 */
+.winctl__glyph {
+  position: relative;
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+
+.winctl__glyph--min {
+  height: 1px;
+  background: currentColor;
+}
+
+.winctl__glyph--max {
+  border: 1px solid currentColor;
+}
+
+/* 还原图标 = 前后两个方框错开（和系统那个一样） */
+.winctl__glyph--restore {
+  border: 1px solid currentColor;
+}
+
+.winctl__glyph--restore::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: -4px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+  border-bottom: 0;
+  border-left: 0;
+}
+
+/* 叉用两条 45° 渐变画，比字符锐利，也不用担心字体回退 */
+.winctl__glyph--close {
+  background:
+    linear-gradient(45deg, transparent 44%, currentColor 44% 56%, transparent 56%),
+    linear-gradient(-45deg, transparent 44%, currentColor 44% 56%, transparent 56%);
+}
+
+/* ---------------- 浮动条 / 控制条上的拖动把手 ---------------- */
+
+/**
+ * 窗口是 `frame: false` 的，没有标题栏 —— 拖动区就是这条 bar 本身（浮窗里更是整块
+ * 画面区，见 float-drag.ts）。把手不承担功能，纯粹**把「这里能拖」摆出来**：
+ * 自绘控件没人试过就等于不存在，和 `.floatgrip` 是同一条理由。
+ */
+.bar__grip {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 16px;
+  border-radius: 2px;
+  /* 2x3 的点阵。用背景画，不用 ⠿ 这类点阵字符：那类字符的字体回退不可控，
+     换个系统可能变成一个方框或者一整行错位的点 */
+  background-image: radial-gradient(circle at 2px 2px, var(--border-strong) 1.4px, transparent 1.5px);
+  background-size: 5px 5px;
+  background-repeat: repeat;
+  opacity: 0.85;
+}
+
+/* 浮窗那条 bar 现在由 `.floatmenu` 开关，把手跟着它一起出现就够 ——
+   原来这里挂着一条 hover 特例（`.app--float:hover .floatbar .bar__grip`），
+   那是「bar 自己靠 hover 才浮出来」时代的产物，已经跟着一起删掉了 */
