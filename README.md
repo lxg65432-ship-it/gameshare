@@ -1,23 +1,22 @@
 # GameShare
 
-**English**: A lightweight Windows tool for 2–4 players to share their game windows
-with each other over P2P WebRTC — everyone runs their own game locally and sees
-everyone else's window in real time.
+> [English](README.en.md) | 简体中文
 
-轻量级 Windows 多人游戏画面共享工具。
+这个工具解决的问题很小，也很具体：几个朋友，各自在家打自己的游戏，但想互相看到彼此在玩什么。
 
-> 进房间 → 选游戏 → 开始共享 → 互相看画面。
+它是一个轻量级的 Windows 画面共享工具。进房间 → 选游戏窗口 → 开始共享 → 互相看画面。
 
-2～4 人异地使用，各自跑自己的游戏，各自共享自己的游戏窗口，同时看到其他玩家的画面。
-视频默认 WebRTC P2P 直连，声音按应用 / 整机 / 无声三态可选，浮窗模式可在全屏游戏上叠一层小窗。
+2～4 人异地使用，各自跑自己的游戏，各自共享自己的游戏窗口。视频走 WebRTC P2P 直连；
+声音可以只共享目标应用、共享整机、或者干脆不出声；全屏游戏时可以缩成小窗叠在画面上，
+不抢焦点。
 
 ---
 
 ## 项目现状
 
-**v1.0（个人版）**——按「朋友间内部使用合格」的标准冻结。里程碑 M0～M6 全部完成
-并各有自动化验收守护；M7～M10（网络状态面板 / TURN 中继 / 自动重连 / 性能压测）
-暂不在当前计划内，详见 `docs/ROADMAP.md`。
+**v1.0**——功能做到这里冻结：自己和朋友用着够好了。里程碑 M0～M6 全部完成，
+每一项都有自动化验收守着；M7～M10（网络状态面板 / TURN 中继 / 自动重连 /
+性能压测）明确不做，留给愿意折腾的人，详见 `docs/ROADMAP.md`。
 
 - 2～4 人 Mesh，视频 P2P 直连（WebRTC），各路画面独立解码独立控制画质
 - 游戏窗口捕获（推荐无边框窗口化；独占全屏不支持）
