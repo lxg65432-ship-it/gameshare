@@ -22,8 +22,12 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
  *    `pointerup` 收不到 —— 表现是拖一下就粘住、松手还在动。
  * 3. **控件上按下不算拖动**：滑杆要能拖、按钮要能点，所以按下时先看目标是不是控件。
  *
- * 缩放的目标是**窗口外框**尺寸（`outerWidth/outerHeight`），因为 `setBounds` 收的是窗口矩形；
- * 小窗那边是无边框窗口、两者恰好相等，所以那边用的是 `innerWidth` —— 不是这里写错。
+ * 缩放与移动的基准尺寸是 `innerWidth/innerHeight`，**不是 `outerWidth`**：
+ * 主窗口 `frame: false` 时 Windows 仍给一圈约 8px 的不可见 resize 边框（thickFrame），
+ * `outerWidth` 会把这圈也算进去（实测 520 的窗口报 536）—— 而主进程 `setBounds`
+ * 收的是 `getBounds()` 那个矩形（= innerWidth）。基准用 outerWidth 的话，每按一次
+ * 缩放手柄窗口就涨 16px，用户看到的就是「一边拖一边变大」（2026-09-18 朋友实测复现、
+ * 探针实锤）。小窗那边是无边框窗口、inner 与 outer 相等，两边从此统一用 inner。
  */
 
 interface DragState {
@@ -34,7 +38,7 @@ interface DragState {
   /** 按下那一刻窗口左上角的屏幕坐标 */
   winX: number;
   winY: number;
-  /** 按下那一刻窗口的外框尺寸 */
+  /** 按下那一刻窗口的客户区尺寸（= 主进程 getBounds 的 w/h，见文件尾注释） */
   winW: number;
   winH: number;
 }
@@ -70,8 +74,8 @@ function begin(
     startY: event.screenY,
     winX: window.screenX,
     winY: window.screenY,
-    winW: window.outerWidth,
-    winH: window.outerHeight,
+    winW: window.innerWidth,
+    winH: window.innerHeight,
   };
   dragMoved = false;
   tapHandler = onTap ?? null;
@@ -87,8 +91,14 @@ function move(event: ReactPointerEvent<HTMLElement>): void {
   const dx = event.screenX - drag.startX;
   const dy = event.screenY - drag.startY;
   if (Math.abs(dx) > TAP_SLOP || Math.abs(dy) > TAP_SLOP) dragMoved = true;
-  if (drag.mode === 'move') api.moveTo(drag.winX + dx, drag.winY + dy);
-  else api.resizeTo(drag.winW + dx, drag.winH + dy);
+  if (drag.mode === 'move') {
+    // 尺寸也一并下发（按下时锁定的值）：主进程因此不用每帧展开 getBounds()。
+    // 那个 roundtrip 在非 100% 缩放的屏幕上取整误差会逐帧累积 —— 表现就是
+    // 「拖动时窗口慢慢变大」。全程锁定尺寸，拖动就只改位置。
+    api.moveTo(drag.winX + dx, drag.winY + dy, drag.winW, drag.winH);
+  } else {
+    api.resizeTo(drag.winW + dx, drag.winH + dy);
+  }
 }
 
 /**

@@ -157,6 +157,12 @@ export class CaptureManager {
     return settings?.height ?? null;
   }
 
+  /** 同 sourceHeight：码率自适应换算需要源像素量（宽 × 高） */
+  get sourceWidth(): number | null {
+    const settings = this.track?.getSettings();
+    return settings?.width ?? null;
+  }
+
   /** 源被关闭（用户关掉被共享的窗口）时回调，M2 用它弹提示 */
   onSourceEnded(handler: (() => void) | null): void {
     this.#onSourceEnded = handler;
@@ -293,7 +299,10 @@ export class CaptureManager {
    */
   #requestDisplay(withAudio: boolean): Promise<MediaStream> {
     return navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 60 },
+      // 采集端只定「上限」：WGC 按内容变化出帧，画面不动时帧率自然低，
+      // 这里写高没有常驻代价。实际发多少帧由编码端 maxFramerate（用户可选
+      // 30/60/120）控制 —— 采集 60 + 编码 120 是永远到不了 120 的组合。
+      video: { frameRate: 120 },
       audio: withAudio
         ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
         : false,

@@ -165,13 +165,16 @@ const scale = computeScaleResolutionDownBy(track.getSettings().height, profile.t
 `applyQuality(peerId, level)`，内部实现可以被整体替换。不要把
 `setParameters` 的调用铺进 UI 层。
 
-### 4.5 反作弊风险（必须提前告知使用者）
+### 4.5 反作弊风险（README 明示，不进界面）
 
 部分带反作弊（EAC / BattlEye / Vanguard 等）的游戏会把桌面捕获行为判定为
 异常，存在封号风险；另有一批游戏直接阻止捕获，表现为黑屏或纯色帧。
 
-**这不是能靠代码绕过的技术问题**，属于使用层面的风险。
-M2 之后应在客户端里加一条明确的提示，让使用者自行确认目标游戏是否允许被捕获。
+**口径（2026-09-19 拍板）**：本软件的捕获走 WGC（Windows Graphics Capture），
+系统级合成管线、不注入游戏进程 —— 主流反作弊不会因此封号；真正的限制是
+「独占全屏抓不到，改无边框窗口化即可」。风险与限制统一写进 README
+「已知限制」，**界面里不再放警示**：给小圈子用的开源工具，常驻警告只会
+给使用者徒增心理负担，README 里查得到就够了。
 
 ### 4.6 原规划的 `packages/types` 已合并进 `packages/protocol`
 

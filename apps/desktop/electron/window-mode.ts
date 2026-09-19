@@ -487,9 +487,30 @@ export function registerWindowModeHandlers(): void {
     const win = primaryWindow();
     if (!win || win.isDestroyed()) return;
     if (!payload || typeof payload !== 'object') return;
-    const { x, y } = payload as { x?: unknown; y?: unknown };
+    const { x, y, width, height } = payload as {
+      x?: unknown;
+      y?: unknown;
+      width?: unknown;
+      height?: unknown;
+    };
     if (typeof x !== 'number' || typeof y !== 'number') return;
-    win.setBounds({ ...win.getBounds(), x: Math.round(x), y: Math.round(y) });
+    if (typeof width !== 'number' || typeof height !== 'number' || width <= 0 || height <= 0) {
+      return;
+    }
+    /**
+     * 尺寸用渲染层按下时锁定的值，**绝不展开 getBounds()**。
+     *
+     * 曾经的实现是 `setBounds({ ...win.getBounds(), x, y })` —— 每帧把「当前读到
+     * 的尺寸」写回去。本机 100% 缩放下这个往返幂等（探针 500 次 0 漂移），但
+     * 非 100% 缩放的屏幕上 DIP↔物理取整误差会逐帧累积，朋友实测看到的就是
+     * 「一边拖一边整个浮窗变大」。拖动全程锁定尺寸，setBounds 只改位置。
+     */
+    win.setBounds({
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.round(width),
+      height: Math.round(height),
+    });
   });
 
   ipcMain.on('float:resize-to', (event, payload: unknown) => {

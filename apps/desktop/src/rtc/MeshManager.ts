@@ -30,6 +30,8 @@ export interface MeshManagerOptions {
   iceServers: IceServerConfig[];
   selfPeerId: string;
   getSourceHeight?: () => number | null;
+  /** 同上，码率自适应换算需要源像素量（宽 × 高） */
+  getSourceWidth?: () => number | null;
   onLinkStateChange?: (peerId: string, state: LinkState, detail?: string) => void;
   onRemoteStream?: (peerId: string, stream: MediaStream) => void;
   /** 远端三条轨按角色上报。接收侧要分别控制语音 / 应用声音时读这个 */
@@ -51,6 +53,7 @@ export class MeshManager {
   #iceServers: IceServerConfig[];
   #selfPeerId: string;
   #getSourceHeight: () => number | null;
+  #getSourceWidth: () => number | null;
   #onLinkStateChange: (peerId: string, state: LinkState, detail?: string) => void;
   #onRemoteStream: (peerId: string, stream: MediaStream) => void;
   #onRemoteTracks: (peerId: string, tracks: RemoteTracks) => void;
@@ -59,6 +62,8 @@ export class MeshManager {
 
   #links = new Map<string, PeerLink>();
   #pending = new Map<string, PendingSignal[]>();
+  /** 当前共享帧率偏好；新建链路时立即应用，否则中途加入的观看者拿不到它 */
+  #userFps: number | null = null;
   #unsubscribe: Array<() => void> = [];
   /**
    * 三条本地轨，按角色存。
@@ -74,6 +79,7 @@ export class MeshManager {
     this.#iceServers = opts.iceServers;
     this.#selfPeerId = opts.selfPeerId;
     this.#getSourceHeight = opts.getSourceHeight ?? (() => null);
+    this.#getSourceWidth = opts.getSourceWidth ?? (() => null);
     this.#onLinkStateChange = opts.onLinkStateChange ?? (() => undefined);
     this.#onRemoteStream = opts.onRemoteStream ?? (() => undefined);
     this.#onRemoteTracks = opts.onRemoteTracks ?? (() => undefined);
@@ -171,12 +177,15 @@ export class MeshManager {
       signaling: this.#signaling,
       iceServers: this.#iceServers,
       getSourceHeight: this.#getSourceHeight,
+      getSourceWidth: this.#getSourceWidth,
       onStateChange: (state, detail) => this.#onLinkStateChange(remotePeerId, state, detail),
       onRemoteStream: (stream) => this.#onRemoteStream(remotePeerId, stream),
       onRemoteTracks: (tracks) => this.#onRemoteTracks(remotePeerId, tracks),
       onError: (err) => this.#onError(remotePeerId, err),
       log: this.#log,
     });
+    // 新链路应用当前帧率偏好：观看者中途加入时不该丢掉这个设置
+    if (this.#userFps !== null) void link.setUserFps(this.#userFps);
 
     this.#links.set(remotePeerId, link);
 
@@ -228,6 +237,14 @@ export class MeshManager {
     if (!link) return false;
     void link.setQuality(level);
     return true;
+  }
+
+  /** 用户改了共享帧率：所有链路的编码上限同步更新（帧率是采集源的全局属性） */
+  setUserFps(fps: number): void {
+    this.#userFps = fps;
+    for (const link of this.#links.values()) {
+      void link.setUserFps(fps);
+    }
   }
 
   getLink(peerId: string): PeerLink | undefined {

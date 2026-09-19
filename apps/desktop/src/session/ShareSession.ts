@@ -54,6 +54,8 @@ export interface SessionState {
   remoteSharing: Record<string, boolean>;
   sharing: boolean;
   captureLabel: string | null;
+  /** 共享帧率偏好（30/60/120）。编码端 maxFramerate 与采集端共同的上限来源 */
+  shareFps: number;
   /** 本机这次共享是否真的带上了系统声音（采集降级时为 false） */
   hasAudio: boolean;
   /** 应用声音这一条轨当前是否在往外发（关掉后画面照常推） */
@@ -117,6 +119,7 @@ const INITIAL_STATE: SessionState = {
   remoteSharing: {},
   sharing: false,
   captureLabel: null,
+  shareFps: 30,
   hasAudio: false,
   appAudioEnabled: false,
   audioMode: null,
@@ -362,6 +365,7 @@ export class ShareSession {
         iceServers: buildIceServers(),
         selfPeerId: room.self.peerId,
         getSourceHeight: () => this.capture.sourceHeight,
+        getSourceWidth: () => this.capture.sourceWidth,
         onLinkStateChange: (peerId, state, detail) => {
           // 对端已离开房间时，链路拆除过程中的 'closed' 回调会晚于 #prunePeer，
           // 照单收下就等于把刚删掉的条目又塞回 state —— UI 上会永远留着一个
@@ -386,6 +390,11 @@ export class ShareSession {
         log: (line) => this.pushLog(line),
       });
       this.#mesh.attach();
+
+      // 帧率偏好可能先于进房被修改（那时 Mesh 还不存在，setShareFps 只写进了
+      // state）。state.shareFps 是唯一偏好来源，Mesh 建好后立即补应用 ——
+      // 否则「先改偏好后进房」的顺序会静默丢设置。
+      this.#mesh.setUserFps(this.#state.shareFps);
 
       // 允许先开麦 / 先开始共享再进房间：此时链路还不存在，等 Mesh 建好后补挂一次。
       // 三条轨分别判断，互不牵连（麦克风与共享的先后顺序是任意的）。
@@ -664,6 +673,20 @@ export class ShareSession {
   /** 作为观看者，向某位发送方请求画质 */
   requestQualityFrom(peerId: string, level: QualityLevel): void {
     this.signaling.requestQuality(peerId, level);
+  }
+
+  /**
+   * 设置共享帧率（30/60/120）。
+   *
+   * 帧率是**采集源的全局属性**（所有链路共用同一路采集），所以是本机设置，
+   * 不走观看者请求那条信令。共享中修改即时生效（setParameters），未共享时
+   * 只记偏好，等下一次 startShare 应用。
+   */
+  setShareFps(fps: number): void {
+    if (this.#state.shareFps === fps) return;
+    this.#patch({ shareFps: fps });
+    this.pushLog(`共享帧率 → ${fps}`);
+    this.#mesh?.setUserFps(fps);
   }
 
   /* ---------------- 只读派生 ---------------- */

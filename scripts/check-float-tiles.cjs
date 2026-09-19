@@ -351,7 +351,7 @@ ipcRenderer.on('pump-port', (event, meta) => {
 const ROGUE_PRELOAD = `'use strict';
 const { ipcRenderer } = require('electron');
 window.addEventListener('DOMContentLoaded', function () {
-  ipcRenderer.send('float:move-to', { x: 7, y: 7 });
+  ipcRenderer.send('float:move-to', { x: 7, y: 7, width: 520, height: 293 });
   ipcRenderer.send('float:resize-to', { width: 999, height: 999 });
 });`;
 
@@ -1267,7 +1267,7 @@ async function groupDrag() {
 
   const start = win.getBounds();
   await win.webContents.executeJavaScript(
-    `window.gameShare.windowMode.moveTo(${area.x + 60}, ${area.y + 60})`,
+    `window.gameShare.windowMode.moveTo(${area.x + 60}, ${area.y + 60}, ${start.width}, ${start.height})`,
   );
   await waitFor(() => win.getBounds().x === area.x + 60 && win.getBounds().y === area.y + 60, 2000);
   const moved = win.getBounds();

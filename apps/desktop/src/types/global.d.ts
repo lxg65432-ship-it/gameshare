@@ -164,8 +164,13 @@ export interface GameShareTileApi {
   toggleMute(peerId: string): void;
   /** 主窗口把这一路的静音状态推过来，保证小窗上的按钮不会说反话 */
   onMuted(callback: (muted: boolean) => void): () => void;
-  /** 拖动窗口。传的是目标左上角在屏幕上的坐标 */
-  moveTo(x: number, y: number): void;
+  /**
+   * 拖动窗口。传的是目标左上角在屏幕上的坐标，以及**按下那一刻锁定的客户区尺寸**。
+   *
+   * 尺寸必须跟着传：主进程将直接按它 setBounds，不再每帧展开 getBounds() ——
+   * 非 100% 缩放屏上那个往返的取整误差会逐帧累积，用户看到的就是「拖动时浮窗变大」。
+   */
+  moveTo(x: number, y: number, width: number, height: number): void;
   resizeTo(width: number, height: number): void;
   /** 上报画面尺寸，帧泵按它缩放 */
   reportSize(width: number, height: number): void;
@@ -225,8 +230,11 @@ export interface GameShareApi {
      *
      * 浮窗是 `setFocusable(false)` 的窗口，系统那套「拖标题栏、拉边框」都不成立，
      * 只能由渲染层算好坐标交给主进程 `setBounds`（只在浮窗模式下受理）。
+     *
+     * moveTo 的尺寸是**按下那一刻锁定的值**，主进程直接按它落 setBounds ——
+     * 拖动全程窗口尺寸恒定，不读 getBounds()（避免缩放屏上的逐帧取整漂移）。
      */
-    moveTo(x: number, y: number): void;
+    moveTo(x: number, y: number, width: number, height: number): void;
     resizeTo(width: number, height: number): void;
   };
   /**

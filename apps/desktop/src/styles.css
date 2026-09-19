@@ -1,16 +1,47 @@
+/* ---------------- 字体 ----------------
+ * Rajdhani（OFL 开源协议）：电竞 HUD 感的显示字体，只用于标题、数字与状态词；
+ * 中文正文走系统栈（中文 webfont 动辄数 MB，不值）。
+ * 本地打包进产物（src/fonts/），离线可用，不依赖 CDN。 */
+
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./fonts/rajdhani-500.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./fonts/rajdhani-600.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/rajdhani-700.woff2') format('woff2');
+}
+
 :root {
-  --bg: #0f1115;
-  --bg-panel: #171a21;
-  --bg-input: #0b0d11;
-  --border: #262b36;
-  --border-strong: #363d4b;
-  --text: #e6e9ef;
-  --text-dim: #8b93a5;
-  --accent: #4c8dff;
-  --accent-hover: #5f9bff;
-  --ok: #37c07a;
+  --bg: #0c0e13;
+  --bg-panel: #141822;
+  --bg-input: #090b10;
+  --border: #242a38;
+  --border-strong: #38415a;
+  --text: #e8ebf2;
+  --text-dim: #8a92a6;
+  --accent: #38c8f5;
+  --accent-hover: #63d5ff;
+  --accent-dim: rgba(56, 200, 245, 0.12);
+  --ok: #3ecf8e;
   --warn: #e8b13a;
-  --err: #e5645c;
+  --err: #f0605c;
+  --font-display: 'Rajdhani', 'Segoe UI', 'Microsoft YaHei', sans-serif;
 
   color-scheme: dark;
 }
@@ -27,9 +58,14 @@ body,
 }
 
 body {
-  background: var(--bg);
+  /* 极淡的坐标网格：40px 一格，只在深底上隐约可见 —— 游戏编辑器的观感，不抢内容 */
+  background:
+    linear-gradient(rgba(56, 200, 245, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 200, 245, 0.025) 1px, transparent 1px),
+    var(--bg);
+  background-size: 40px 40px, 40px 40px, auto;
   color: var(--text);
-  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-family: 'Segoe UI', system-ui, 'Microsoft YaHei', sans-serif;
   font-size: 13px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
@@ -63,25 +99,31 @@ body {
 .app__logo {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: linear-gradient(140deg, var(--accent), #7b5cff);
+  width: 27px;
+  height: 27px;
+  border-radius: 6px;
+  background: linear-gradient(150deg, var(--accent), #1f7ec4);
   color: #fff;
-  font-size: 14px;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .app__title h1 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  line-height: 1.1;
+  text-transform: uppercase;
 }
 
 .app__subtitle {
   margin: 0;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
 }
 
 .status {
@@ -92,7 +134,10 @@ body {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--bg-input);
-  font-size: 12px;
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -167,10 +212,49 @@ body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(252px, 300px) 1fr;
+  /* 三列：侧栏 | 拖拽条 | 画面区。实际列宽由 App 内联覆盖（可拖拽调宽，
+     收起时切换成两列 '6px 1fr' —— 侧栏条件渲染，列模板必须同步，见 App.tsx）。 */
+  grid-template-columns: 300px 6px 1fr;
   gap: 10px;
   padding: 10px 14px;
   overflow: hidden;
+}
+
+/* 侧栏与画面区之间的拖拽条：中间那颗小把手按钮负责一键收起 / 展开 */
+.app__resizer {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.app__resizer:hover,
+.app__resizer--dragging {
+  background: var(--border);
+}
+
+.app__resizer__grip {
+  width: 16px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--text-dim, #8a93a6);
+  font-size: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.app__resizer__grip:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .app__side {
@@ -192,9 +276,13 @@ body {
     grid-template-columns: 1fr;
     overflow: auto;
   }
+  .app__resizer {
+    display: none;
+  }
 }
 
 .panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -204,6 +292,34 @@ body {
   background: var(--bg-panel);
   align-self: start;
   width: 100%;
+}
+
+/* 游戏元素：左上 / 右下两枚 L 形角标 —— HUD 取景框的语言，克制版。
+   只用伪元素画线，不引入图片；透明度压到 0.35，扫一眼有、盯住无。 */
+.panel::before,
+.panel::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(56, 200, 245, 0.35);
+  pointer-events: none;
+}
+
+.panel::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+  border-top-left-radius: 10px;
+}
+
+.panel::after {
+  right: -1px;
+  bottom: -1px;
+  border-left: none;
+  border-top: none;
+  border-bottom-right-radius: 10px;
 }
 
 /* 折叠类面板：收起时只剩一行，不留底部空白 */
@@ -282,6 +398,20 @@ body {
 
 .dot--ok {
   background: var(--ok);
+  /* 运行中的呼吸感：一圈缓慢扩散的光环，1.6s 一轮 —— 活着，但不吵 */
+  animation: dot-pulse 1.6s ease-out infinite;
+}
+
+@keyframes dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(62, 207, 142, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(62, 207, 142, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(62, 207, 142, 0);
+  }
 }
 
 .dot--idle {
@@ -409,7 +539,7 @@ body {
   padding: 7px 12px;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
-  background: #21262f;
+  background: #1c212c;
   color: var(--text);
   font-family: inherit;
   font-size: 12.5px;
@@ -418,8 +548,8 @@ body {
 }
 
 .btn:hover:not(:disabled) {
-  background: #2a303b;
-  border-color: #454d5e;
+  background: #252b38;
+  border-color: #4a5468;
 }
 
 .btn:disabled {
@@ -519,33 +649,6 @@ body {
 
 /* 反作弊那条提示不能长得像普通 hint：它需要被一眼看到，所以给个有边框的块。
    默认收成一行按钮，点开才铺开说明。 */
-.notice__toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 5px 9px;
-  border: 1px solid rgba(232, 177, 58, 0.28);
-  border-radius: 7px;
-  background: rgba(232, 177, 58, 0.07);
-  color: var(--warn);
-  font-family: inherit;
-  font-size: 11.5px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.notice__body {
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px solid rgba(232, 177, 58, 0.28);
-  border-radius: 7px;
-  background: rgba(232, 177, 58, 0.07);
-  color: var(--warn);
-  font-size: 11.5px;
-  line-height: 1.6;
-}
-
 .roomcode {
   display: flex;
   align-items: center;
@@ -569,9 +672,11 @@ body {
 .badge {
   padding: 0 6px;
   border-radius: 999px;
-  background: #232833;
+  background: #202634;
   color: var(--text-dim);
-  font-size: 11px;
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
@@ -971,6 +1076,9 @@ body {
   padding: 3px 11px;
   font-size: 12px;
   border-radius: 999px;
+  /* 「仅此应用」「全部电脑」必须完整一行 —— 断行成两截既难看又像坏了。
+     放不下时让整行换行（.row--modes 有 flex-wrap），按钮自己不拆。 */
+  white-space: nowrap;
 }
 
 /* 选中态：描边 + 浅色底，跟 .tile__act--on 同一语言 */
@@ -1008,8 +1116,11 @@ body {
   padding: 5px 7px;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
   color: #cfd5e0;
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  font-size: 11px;
+  /* 遥测数据用 HUD 显示字体：数字造型带电竞感，且等宽不跳动 */
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1066,7 +1177,8 @@ body {
 
 /* 顶栏和侧栏一起收掉。原生标题栏保留 —— 拖窗口、拖边框改大小都靠它。 */
 .app--float .app__header,
-.app--float .app__side {
+.app--float .app__side,
+.app--float .app__resizer {
   display: none;
 }
 
@@ -1335,8 +1447,11 @@ body {
 
 .hostbar__code {
   flex: none;
-  font-weight: 600;
-  letter-spacing: 1.5px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2.5px;
+  color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 

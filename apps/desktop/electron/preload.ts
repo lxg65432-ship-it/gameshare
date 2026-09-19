@@ -177,8 +177,8 @@ const api = {
      * 激活窗口 —— 非激活窗口上不成立，用户看到的就是「浮窗拖不动」。所以坐标由渲染层
      * 自己算、这里只负责交给主进程 `setBounds`（主进程那边还卡了最小尺寸）。
      */
-    moveTo: (x: number, y: number): void => {
-      ipcRenderer.send('float:move-to', { x, y });
+    moveTo: (x: number, y: number, width: number, height: number): void => {
+      ipcRenderer.send('float:move-to', { x, y, width, height });
     },
     resizeTo: (width: number, height: number): void => {
       ipcRenderer.send('float:resize-to', { width, height });

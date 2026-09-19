@@ -2,6 +2,10 @@
 
 > English | [简体中文](README.md)
 
+> **Built for games, and beyond.**
+> Play with friends a thousand miles away — and it feels like they're sitting
+> right next to you.
+
 A few of my friends and I play different games in different homes, and we wanted
 to see what everyone else is playing. That is the whole idea behind this tool:
 share your game window, see your friends' game windows, get on with the game.
@@ -21,6 +25,9 @@ need, and the parts that matter are guarded by automated acceptance checks.
 Milestones M0 through M6 are done. M7 through M10 (network stats panel, TURN
 relay, auto-reconnect, performance benchmarking) are deliberately not planned;
 see `docs/ROADMAP.md` if you want to pick one up.
+**v1.1** — the first batch of updates from real playtesting: selectable frame
+rate, bitrate that adapts to high-resolution sources, a drag-and-resize sidebar,
+and a fix for float windows growing while dragged.
 
 - 2–4 player WebRTC mesh, each stream independently decoded and quality-controlled
 - Game window capture (borderless windowed recommended; exclusive fullscreen won't work)
@@ -31,6 +38,8 @@ see `docs/ROADMAP.md` if you want to pick one up.
   can split into independent tiles
 - Double-click to enlarge one stream, with automatic quality rebalancing
   (the focused stream goes 1080p, the rest step down to save upload)
+- **Selectable frame rate** (30/60/120) with bitrate adapting to the source
+  resolution — 2K / ultrawide captures no longer get crushed to low quality
 - 200+ automated acceptance checks: 17 signaling cases, decoded-frame assertions,
   audio spectrum isolation, 3-track media structure, overlay z-order and tiles
 
@@ -66,26 +75,26 @@ Both machines only need the installed client — no Node.js, no command line.
 
 ### Same LAN (the default case)
 
-1. Open GameShare on both machines. The "built-in signaling server" panel shows
-   the status and the address the other machine should use
-   (something like `http://192.168.1.100:8080`);
-2. On first launch, Windows Firewall asks for permission — **click "Allow"**.
+1. Open GameShare on both machines. The host enables the **built-in signaling
+   server** in the sidebar panel, then clicks **create room**;
+2. Click **copy invite** next to the room code and send the text to your friend
+   (WeChat / QQ / anything);
+3. Your friend pastes the whole message into the **room code** box — the address
+   gets filled in, the client connects and joins automatically. Nothing to type;
+4. On first launch, Windows Firewall asks for permission — **click "Allow"**.
    Clicking "Cancel" makes the other side hang on "connecting" with no error
-   on either end (how to fix it later: see troubleshooting in the docs);
-3. Enter **the address shown on the other machine's panel** in the
-   "signaling server" field, and connect;
-4. One player creates a room (a 6-character code appears), the other joins
-   with that code.
+   on either end (how to fix it later: see troubleshooting in the docs).
 
-> If both clients are open, the first one gets port 8080 and the second shows
-> "port in use" — that's fine, it still works as a client. Who connects to whom
-> is decided by the address field, not by who hosts the server.
+> Want a custom nickname? Type it before pasting the invite. The old manual flow
+> (typing the server address by hand) is still there, tucked into the
+> "network settings" fold. If both clients are open, the first one gets port
+> 8080 and the second shows "port in use" — that's fine, it still works as a client.
 
 ### Across networks (remote)
 
 Turn on the "remote access" switch (off by default). The client starts a
-temporary tunnel on its own and shows a `https://*.trycloudflare.com` address.
-Use "copy invite" to send the address + room code to your friend in one message.
+temporary tunnel on its own. Then it's the same: **create room → copy invite →
+send it over** — your friend pastes it into the room code box and is in.
 **Turn the switch off when you're done.**
 
 > That address is a public entrance to your machine. See rule 1 above.
@@ -145,7 +154,7 @@ If you'd rather not open a terminal, double-click the bat files in the repo root
 | `diagnose-capture.bat` | Diagnose "the window is running but not in the capture list" |
 | `tunnel.bat` | Manually start the remote tunnel (the client already has a switch) |
 
-Build output lands in `apps/desktop/release/`: `GameShare Setup 1.0.0.exe`
+Build output lands in `apps/desktop/release/`: `GameShare Setup 1.1.5.exe`
 (installer) or `win-unpacked/GameShare.exe` (portable).
 
 > The bat files look for node.exe via the `GAMESHARE_NODE_DIR` environment

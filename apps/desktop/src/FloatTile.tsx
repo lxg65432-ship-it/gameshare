@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { getLang, subscribeLang, t } from './i18n';
+
+/** 语言订阅（与 App 的 useI18n 同构；小窗是独立组件树，自己挂一份） */
+const useI18n = (): typeof t => {
+  useSyncExternalStore(subscribeLang, getLang);
+  return t;
+};
 
 /**
  * 拆分模式下的小窗页面：一个原生窗口里只画**一路**画面。
@@ -15,8 +22,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * 每帧都是从源的全分辨率重新缩放的。
  */
 
-const DEFAULT_NAME = '对端';
-
 interface DragState {
   mode: 'move' | 'resize';
   startX: number;
@@ -28,6 +33,7 @@ interface DragState {
 }
 
 export default function FloatTile() {
+  const t = useI18n();
   const params = new URLSearchParams(window.location.search);
   const index = params.get('floatTile') ?? '0';
 
@@ -44,7 +50,7 @@ export default function FloatTile() {
    * 名字，而「静音这一路」还会发给一个已经不在房间里的人。
    */
   const [peerId, setPeerId] = useState(params.get('peer') ?? '');
-  const [name, setName] = useState(params.get('name') ?? DEFAULT_NAME);
+  const [name, setName] = useState(params.get('name') ?? t('tileFloat.defaultPeer'));
   const [muted, setMuted] = useState(params.get('muted') === '1');
 
   const [hasFrame, setHasFrame] = useState(false);
@@ -163,8 +169,13 @@ export default function FloatTile() {
     if (!api) return;
     const dx = event.screenX - drag.startX;
     const dy = event.screenY - drag.startY;
-    if (drag.mode === 'move') api.moveTo(drag.winX + dx, drag.winY + dy);
-    else api.resizeTo(drag.winW + dx, drag.winH + dy);
+    if (drag.mode === 'move') {
+      // 尺寸一并下发（按下时锁定）：主进程不用每帧展开 getBounds()，
+      // 非 100% 缩放屏上的 roundtrip 取整误差就不会逐帧累积成「拖动变大」。
+      api.moveTo(drag.winX + dx, drag.winY + dy, drag.winW, drag.winH);
+    } else {
+      api.resizeTo(drag.winW + dx, drag.winH + dy);
+    }
   }, []);
 
   const endDrag = useCallback((): void => {
@@ -189,7 +200,7 @@ export default function FloatTile() {
     >
       <canvas ref={canvasRef} className="tilewin__canvas" />
 
-      {!hasFrame && <div className="tilewin__wait">等待画面…</div>}
+      {!hasFrame && <div className="tilewin__wait">{t('tileFloat.waiting')}</div>}
 
       {/*
         名字**常驻**，不跟着悬浮条一起隐。
@@ -208,9 +219,9 @@ export default function FloatTile() {
           className={`tilewin__mute${muted ? ' tilewin__mute--on' : ''}`}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={toggleMute}
-          title={muted ? '取消静音这一路' : '静音这一路（只影响本机）'}
+          title={muted ? t('tileFloat.unmuteTitle') : t('tileFloat.muteTitle')}
         >
-          {muted ? '已静音' : '有声'}
+          {muted ? t('tileFloat.muted') : t('tileFloat.live')}
         </button>
       </div>
 
@@ -224,7 +235,7 @@ export default function FloatTile() {
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        title="拖动改大小"
+        title={t('tileFloat.gripTitle')}
       />
     </div>
   );

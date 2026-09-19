@@ -15,37 +15,46 @@ import type { LinkStats, RemoteTracks } from './rtc/types';
 import { floatBallProps, floatDragProps, floatGripProps } from './float-drag';
 import { ShareSession } from './session/ShareSession';
 import type { ConnectionState } from './signaling/SignalingClient';
+import { getLang, setLang, subscribeLang, t as lookup, fmt } from './i18n';
+import type { I18nKey } from './i18n';
 
-const STATE_LABEL: Record<ConnectionState, string> = {
-  idle: '未连接',
-  connecting: '连接中',
-  connected: '已连接',
-  disconnected: '已断开',
+/** 语言切换的订阅：lang 变化触发重渲染，文案经 t() 取当前语言的值 */
+const useI18n = (): typeof lookup => {
+  useSyncExternalStore(subscribeLang, getLang);
+  return lookup;
 };
 
-const LINK_LABEL: Record<string, string> = {
-  new: '待建连',
-  connecting: '协商中',
-  connected: '已连接',
-  disconnected: '中断',
-  failed: '失败',
-  closed: '已关闭',
+/* 状态文案存 i18n key，使用处经 t() 取当前语言 */
+const STATE_LABEL: Record<ConnectionState, I18nKey> = {
+  idle: 'state.conn.idle',
+  connecting: 'state.conn.connecting',
+  connected: 'state.conn.connected',
+  disconnected: 'state.conn.disconnected',
+};
+
+const LINK_LABEL: Record<string, I18nKey> = {
+  new: 'state.link.new',
+  connecting: 'state.link.connecting',
+  connected: 'state.link.connected',
+  disconnected: 'state.link.disconnected',
+  failed: 'state.link.failed',
+  closed: 'state.link.closed',
 };
 
 /** 内置信令服务器的状态文案。'port-in-use' 不是故障，是本机已经有服务器了。 */
-const SERVER_STATE_LABEL: Record<EmbeddedServerStatus['state'], string> = {
-  running: '运行中',
-  'port-in-use': '未启动',
-  failed: '启动失败',
-  stopped: '已关闭',
+const SERVER_STATE_LABEL: Record<EmbeddedServerStatus['state'], I18nKey> = {
+  running: 'state.server.running',
+  'port-in-use': 'state.server.port-in-use',
+  failed: 'state.server.failed',
+  stopped: 'state.server.stopped',
 };
 
 /** 异地访问隧道的状态文案 */
-const TUNNEL_STATE_LABEL: Record<TunnelStatus['state'], string> = {
-  stopped: '未开启',
-  starting: '建立中…',
-  running: '已就绪',
-  failed: '失败',
+const TUNNEL_STATE_LABEL: Record<TunnelStatus['state'], I18nKey> = {
+  stopped: 'state.tunnel.stopped',
+  starting: 'state.tunnel.starting',
+  running: 'state.tunnel.running',
+  failed: 'state.tunnel.failed',
 };
 
 /** 网格里每一路的档位 */
@@ -79,22 +88,32 @@ const DEFAULT_PEER_AUDIO: PeerAudioPref = {
 };
 
 /** 共享声音的三种正式状态（任务书口径）；`loopback` 是调试模式，不进界面 */
-const UI_AUDIO_MODES: Array<{ mode: AudioCaptureMode; label: string; title: string }> = [
-  { mode: 'application', label: '仅此应用', title: '只共享所选窗口那个应用（及其子进程）的声音' },
-  { mode: 'system', label: '全部电脑', title: '共享整机声音，但排除本软件自己播放的语音' },
-  { mode: 'none', label: '无声', title: '只共享画面，不发送任何声音' },
+const UI_AUDIO_MODES: Array<{ mode: AudioCaptureMode; label: I18nKey; title: I18nKey }> = [
+  { mode: 'application', label: 'audio.app', title: 'audio.app.title' },
+  { mode: 'system', label: 'audio.system', title: 'audio.system.title' },
+  { mode: 'none', label: 'audio.none', title: 'audio.none.title' },
 ];
 
 /** 模式在状态 tag 里的短名 */
-const AUDIO_MODE_LABEL: Partial<Record<AudioCaptureMode, string>> = {
-  application: '应用声音',
-  system: '全部声音',
-  none: '无声音',
+const AUDIO_MODE_LABEL: Partial<Record<AudioCaptureMode, I18nKey>> = {
+  application: 'audio.tag.app',
+  system: 'audio.tag.system',
+  none: 'audio.tag.none',
 };
+
+/**
+ * 可选共享帧率。这是发送方本机设置（帧率是采集源的全局属性，与观看者无关），
+ * 落到每条链路时还会被档位上限再压一次（THUMBNAIL 恒 30，见 quality.ts）。
+ */
+const UI_FPS_OPTIONS: readonly number[] = [30, 60, 120];
+
+/** 帧率偏好的 localStorage 键；跨会话记住用户选过哪一档 */
+const SHARE_FPS_STORAGE_KEY = 'gs.shareFps';
 
 export default function App() {
   const [session] = useState(() => new ShareSession());
   const state = useSyncExternalStore(session.subscribe, session.getState);
+  const t = useI18n();
 
   const [serverUrl, setServerUrl] = useState(DEFAULT_SIGNALING_URL);
   const [nickname, setNickname] = useState('');
@@ -148,7 +167,62 @@ export default function App() {
   /* ---- 左侧折叠状态：默认全收，让核心操作在首屏就能看到 ---- */
   const [serverOpen, setServerOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
-  const [riskOpen, setRiskOpen] = useState(false);
+
+  /**
+   * 信令地址输入框的显隐。默认收起：地址是「网络详情」，对傻瓜流程是噪音，
+   * 对截图是泄露面 —— 邀请流会自动填它，手动用户点开「网络设置」再填。
+   */
+  const [showNetField, setShowNetField] = useState(false);
+
+  /**
+   * 左侧栏宽度与收起状态（localStorage 记忆：gs.sidebarWidth / gs.sidebarCollapsed）。
+   *
+   * 默认 300px；可拖拽（app__body 中间那条 resizer）范围 252~480。收起后侧栏
+   * 完全让位给画面区，展开走 resizer 上那颗把手按钮。
+   */
+  const [sideWidth, setSideWidth] = useState(300);
+  const [sideCollapsed, setSideCollapsed] = useState(false);
+  useEffect(() => {
+    const w = Number(window.localStorage.getItem('gs.sidebarWidth'));
+    if (Number.isFinite(w) && w >= 252 && w <= 480) setSideWidth(w);
+    setSideCollapsed(window.localStorage.getItem('gs.sidebarCollapsed') === '1');
+  }, []);
+  const applySideWidth = useCallback((w: number) => {
+    const next = Math.min(480, Math.max(252, Math.round(w)));
+    setSideWidth(next);
+    window.localStorage.setItem('gs.sidebarWidth', String(next));
+  }, []);
+  const toggleSideCollapsed = useCallback(() => {
+    setSideCollapsed((v) => {
+      window.localStorage.setItem('gs.sidebarCollapsed', v ? '0' : '1');
+      return !v;
+    });
+  }, []);
+  /** 拖拽调宽：按下锁基准（起点 + 起始宽度），move 算差值 —— setBounds 异步的教训同源 */
+  const sideDragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const [sideDragging, setSideDragging] = useState(false);
+  const onResizerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0 || sideCollapsed) return;
+      // 把手上按下交给它的 click（收起/展开），只有条上按下才是拖拽
+      if ((e.target as HTMLElement).closest('.app__resizer__grip')) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      sideDragRef.current = { startX: e.clientX, startW: sideWidth };
+      setSideDragging(true);
+    },
+    [sideCollapsed, sideWidth],
+  );
+  const onResizerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const d = sideDragRef.current;
+    if (!d) return;
+    applySideWidth(d.startW + (e.clientX - d.startX));
+  }, [applySideWidth]);
+  const onResizerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!sideDragRef.current) return;
+    sideDragRef.current = null;
+    setSideDragging(false);
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+  }, []);
 
   /**
    * 被静音的远端 peerId 集合。默认全不静音。
@@ -191,6 +265,7 @@ export default function App() {
     remoteSharing,
     sharing,
     captureLabel,
+    shareFps,
     hasAudio,
     appAudioEnabled,
     audioMode,
@@ -389,18 +464,91 @@ export default function App() {
 
   const copyInvite = useCallback(async (): Promise<void> => {
     if (!room || !inviteAddress) return;
+    // 邀请码：GS1.<base64({server, room})>，机器可读的一整行 —— 对方粘贴进
+    // 房间码框就能自动填地址 + 自动连接 + 自动加入，不用再对着两个字段手抄。
+    // 地址与房间码都是 ASCII，btoa 安全；前缀 GS1. 便于在任意文本里定位。
+    const code = `GS1.${btoa(JSON.stringify({ server: inviteAddress, room: room.roomCode }))}`;
     const text = [
-      '一起看画面 —— GameShare 客户端',
-      `信令地址：${inviteAddress}`,
-      `房间码：${room.roomCode}`,
+      '一起玩 GameShare！把这行整体复制，粘贴到房间码框就能进：',
+      code,
+      `（信令地址：${inviteAddress} · 房间码：${room.roomCode}）`,
     ].join('\n');
     if (await writeClipboard(text)) {
-      session.pushLog('邀请信息已复制（信令地址 + 房间码）');
+      session.pushLog('邀请信息已复制（对方粘贴到房间码框即可自动加入）');
       flashCopied('invite');
     } else {
       session.pushLog('复制失败，请手动记录信令地址和房间码');
     }
   }, [room, inviteAddress, session, writeClipboard, flashCopied]);
+
+  /**
+   * 解析邀请文本。认三种（按优先级）：
+   *   1. `GS1.<base64>` 邀请码（本应用生成的标准格式）
+   *   2. 旧版三行文本（「信令地址：…」「房间码：…」）
+   *   3. 裸兜底：文本里同时出现一个 http(s) 地址和一个 6 位房间码
+   * 解析不出返回 null（那就当普通输入处理）。
+   */
+  const parseInvite = useCallback((raw: string): { server?: string; room?: string } | null => {
+    const text = raw.trim();
+    if (!text) return null;
+    const m = text.match(/GS1\.([A-Za-z0-9+/=]+)/);
+    if (m) {
+      try {
+        const obj = JSON.parse(atob(m[1])) as { server?: unknown; room?: unknown };
+        const server = typeof obj.server === 'string' ? obj.server : undefined;
+        const room = typeof obj.room === 'string' ? obj.room.toUpperCase() : undefined;
+        if (server || room) return { server, room };
+      } catch {
+        // base64 坏了就走下面的兜底
+      }
+    }
+    const server = text.match(/信令地址[：:]\s*(\S+)/)?.[1];
+    const room = text.match(/房间码[：:]\s*([A-Za-z0-9]{6})/)?.[1]?.toUpperCase();
+    if (server && room) return { server, room };
+    const url = text.match(/https?:\/\/[^\s，,；;）)]+/)?.[0];
+    const bareRoom = text.match(/\b([A-Z0-9]{6})\b/)?.[1];
+    if (url && bareRoom) return { server: url, room: bareRoom };
+    return null;
+  }, []);
+
+  /**
+   * 傻瓜加入流：房间码框就是「万能粘贴框」。
+   *
+   * 粘贴整段邀请文本 → 解析出地址与房间码 → 自动填信令地址（并切换连接）→
+   * 连接成功后自动加入房间。昵称留空就自动生成；想自定义就粘贴前先填好。
+   * 唯一不自动的情形：已经连在另一台服务器上 —— 那时候自动断开会把别人的
+   * 会话扯掉，只填房间码并提示。
+   */
+  const [pendingJoin, setPendingJoin] = useState<string | null>(null);
+  const handleJoinInputChange = useCallback(
+    (raw: string) => {
+      const inv = parseInvite(raw);
+      if (!inv?.room) {
+        // 不是邀请就当手输房间码处理：只留前 8 位（房间码 6 位，留点余量）。
+        // **maxLength 不能设在 DOM 上** —— 粘贴超长文本时浏览器先截断再进 onChange，
+        // 邀请码会被剪成残缺 base64，解析直接失败（实测踩过）。
+        setJoinCode(raw.toUpperCase().slice(0, 8));
+        return;
+      }
+      setJoinCode(inv.room);
+      setJoinError(null);
+      const current = serverUrl.trim() || DEFAULT_SIGNALING_URL;
+      const target = inv.server ?? current;
+      if (inv.server && connected && inv.server !== current) {
+        session.pushLog('邀请地址与当前连接不同：已填房间码；要切换服务器请先断开再粘贴一次');
+        return;
+      }
+      if (inv.server && !connected) setServerUrl(inv.server);
+      setPendingJoin(inv.room);
+      if (!connected && connection.state !== 'connecting') {
+        session.connect(target);
+        session.pushLog(`已识别邀请：正在连接 ${target}，连上后自动加入 ${inv.room}`);
+      } else {
+        session.pushLog(`已识别邀请：房间 ${inv.room}，即将自动加入`);
+      }
+    },
+    [parseInvite, serverUrl, connected, connection.state, session],
+  );
 
   /* ---------------- 链路统计轮询 ---------------- */
 
@@ -456,6 +604,23 @@ export default function App() {
     },
     [session],
   );
+
+  // 自动加入的执行点：连接就绪后消费 pendingJoin。joinRoom 的失败要提到
+  // 界面上（joinError），不然满员 / 码过期又变成「点了没反应」。
+  useEffect(() => {
+    if (!connected || !pendingJoin) return;
+    const code = pendingJoin;
+    setPendingJoin(null);
+    setJoinCode(code);
+    void run(async () => {
+      try {
+        await session.joinRoom(code, nickname);
+      } catch (err) {
+        setJoinError(ShareSession.describeError(err));
+        throw err;
+      }
+    });
+  }, [connected, pendingJoin, run, session, nickname]);
 
   const refreshSources = useCallback(async () => {
     setSourceError(null);
@@ -528,6 +693,25 @@ export default function App() {
   const dismissAudioFailure = useCallback((): void => {
     session.acknowledgeAudioFailure();
   }, [session]);
+
+  /* ---- 共享帧率 ---- */
+
+  // 上次会话选过的帧率：挂载时读回一次。非法值 / 缺失一律保持默认 30。
+  // 必须在进房前就落到 session 上 —— 「先改偏好后进房」的时序由 #syncMesh 兜底。
+  useEffect(() => {
+    const raw = window.localStorage.getItem(SHARE_FPS_STORAGE_KEY);
+    const fps = Number(raw);
+    if ((UI_FPS_OPTIONS as readonly number[]).includes(fps)) session.setShareFps(fps);
+  }, [session]);
+
+  /** 切帧率偏好：立即生效（共享中 setParameters，未共享只记偏好），并跨会话记住 */
+  const changeShareFps = useCallback(
+    (fps: number): void => {
+      window.localStorage.setItem(SHARE_FPS_STORAGE_KEY, String(fps));
+      session.setShareFps(fps);
+    },
+    [session],
+  );
 
   const toggleSourcePicker = useCallback(async () => {
     if (pickerOpen) {
@@ -661,10 +845,10 @@ export default function App() {
                 )}
                 <span className="source__name">
                   <span className={`tag tag--${source.kind}`}>
-                    {source.kind === 'screen' ? '屏幕' : '窗口'}
+                    {source.kind === 'screen' ? t('source.screen') : t('source.window')}
                   </span>
                   {source.name}
-                  {active && <span className="tag tag--live">当前</span>}
+                  {active && <span className="tag tag--live">{t('source.current')}</span>}
                 </span>
               </button>
             </li>
@@ -676,10 +860,7 @@ export default function App() {
           最小化的窗口 Windows 层面也抓不到，所以只能这么提示。
           注意别把判据说成「全屏」—— 实测全屏（无边框）照样能抓，
           被盖住也能抓，只有最小化是死路。 */}
-      <p className="hint hint--dim">
-        找不到某个窗口？<strong>已最小化的窗口不会出现在这里</strong>，Windows 层面也抓不到它 ——
-        切回前台再点「枚举」。全屏、被别的窗口盖住都不影响捕获。
-      </p>
+      <p className="hint hint--dim">{t('source.minimizeHint')}</p>
     </>
   );
 
@@ -687,7 +868,7 @@ export default function App() {
     <VideoTile
       key="self"
       peerId={room?.self.peerId ?? 'self'}
-      title={`${room?.self.nickname ?? '我'}（本地预览）`}
+      title={fmt('tile.selfTitle', { name: room?.self.nickname ?? t('tileFloat.defaultPeer') })}
       stream={session.capture.stream}
       linkState="connected"
       stats={null}
@@ -1093,6 +1274,22 @@ export default function App() {
   const [winMaximized, setWinMaximized] = useState(false);
   useEffect(() => window.gameShare?.windowControl?.onMaximized(setWinMaximized), []);
 
+  /**
+   * 副标题的版本号：从主进程读（app.getVersion() = package.json 的 version）。
+   * **别再写死在副标题里** —— v1.0 定稿时就是写死的「V0.1」忘了改，用户看到
+   * 的版本和实际发布的对不上。读不到（vite 直开、无 preload）就留空不显示。
+   */
+  const [appVersion, setAppVersion] = useState('');
+  useEffect(() => {
+    let alive = true;
+    window.gameShare?.getAppInfo().then((info) => {
+      if (alive) setAppVersion(info.appVersion);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
     <div className={isFloat ? 'app app--float' : 'app'}>
       <header className="app__header">
@@ -1100,11 +1297,23 @@ export default function App() {
           <span className="app__logo">◧</span>
           <div>
             <h1>GameShare</h1>
-            <p className="app__subtitle">多人异地游戏画面共享 · V0.1</p>
+            <p className="app__subtitle">
+              {t('app.tagline')}
+              {appVersion ? ` · V${appVersion}` : ''}
+            </p>
           </div>
         </div>
 
         <div className="app__header-right">
+          {/* 中英切换：只切界面文案，房间/共享等功能不受影响 */}
+          <button
+            type="button"
+            className="btn btn--tiny"
+            onClick={() => setLang(getLang() === 'zh' ? 'en' : 'zh')}
+            title="切换界面语言 / Switch UI language"
+          >
+            {t('lang.toggle')}
+          </button>
           {/* 浮窗模式：全屏游戏时用。快捷键在主进程里全局注册，这里只管显示状态。
               多开客户端时快捷键只有一个窗口抢得到，抢不到就如实标出来 ——
               否则用户按了没反应，只会以为是软件坏了。
@@ -1114,8 +1323,10 @@ export default function App() {
               className="switch switch--boxed"
               title={
                 floatWindow.hotkeyAvailable
-                  ? `全屏游戏时按 ${floatWindow.hotkey.replace('Control+Alt+', 'Ctrl+Alt+')} 一键切换：窗口缩小、压在游戏上面、只留正在共享的画面。位置直接拖浮窗里的画面挪，大小拖右下角那个小三角；透明度在浮窗里的滑杆上调。只能压住无边框 / 窗口化全屏的游戏，独占全屏的要在游戏设置里改成无边框窗口化`
-                  : '快捷键被别的窗口占用了（同时开多个客户端时只有一个能拿到），这里点开关作用一样'
+                  ? fmt('float.hotkeyTitle', {
+                      hotkey: floatWindow.hotkey.replace('Control+Alt+', 'Ctrl+Alt+'),
+                    })
+                  : t('float.hotkeyTakenTitle')
               }
             >
               <input
@@ -1124,18 +1335,18 @@ export default function App() {
                 disabled={floatBusy}
                 onChange={(e) => void handleToggleFloat(e.target.checked)}
               />
-              <span>浮窗模式</span>
+              <span>{t('float.mode')}</span>
               {floatWindow.hotkeyAvailable ? (
                 <span className="tag">{floatWindow.hotkey.replace('Control+Alt+', 'Ctrl+Alt+')}</span>
               ) : (
-                <span className="tag tag--warn">快捷键冲突</span>
+                <span className="tag tag--warn">{t('float.hotkeyConflict')}</span>
               )}
             </label>
           )}
 
           <div className={`status status--${connection.state}`}>
             <span className="status__dot" />
-            <span>{STATE_LABEL[connection.state]}</span>
+            <span>{t(STATE_LABEL[connection.state])}</span>
             {connection.rttMs !== null && <span className="status__rtt">{connection.rttMs} ms</span>}
           </div>
 
@@ -1146,7 +1357,7 @@ export default function App() {
               type="button"
               className="winctl__btn"
               onClick={() => window.gameShare?.windowControl?.minimize()}
-              title="最小化"
+              title={t('win.minimize')}
             >
               <span className="winctl__glyph winctl__glyph--min" />
             </button>
@@ -1154,7 +1365,7 @@ export default function App() {
               type="button"
               className="winctl__btn"
               onClick={() => window.gameShare?.windowControl?.toggleMaximize()}
-              title={winMaximized ? '还原' : '最大化'}
+              title={winMaximized ? t('win.restore') : t('win.maximize')}
             >
               <span
                 className={`winctl__glyph ${winMaximized ? 'winctl__glyph--restore' : 'winctl__glyph--max'}`}
@@ -1164,7 +1375,7 @@ export default function App() {
               type="button"
               className="winctl__btn winctl__btn--close"
               onClick={() => window.gameShare?.windowControl?.close()}
-              title="关闭"
+              title={t('win.close')}
             >
               <span className="winctl__glyph winctl__glyph--close" />
             </button>
@@ -1172,37 +1383,66 @@ export default function App() {
         </div>
       </header>
 
-      <main className="app__body">
+      <main
+        className="app__body"
+        style={
+          // 常规模式：三列（侧栏宽可拖拽调、收起时切两列）。
+          // 浮窗模式**必须不输出**——浮窗 CSS 的单列模板优先级低于内联样式，
+          // 一旦内联，side/resizer 隐藏后 stage 会掉进 300px 的第一列（实测踩过）。
+          isFloat
+            ? undefined
+            : {
+                gridTemplateColumns: sideCollapsed ? '6px 1fr' : `${sideWidth}px 6px 1fr`,
+              }
+        }
+      >
+        {!sideCollapsed && (
         <div className="app__side">
           {/* ---- 连接：地址和昵称各一行输入框，其余信息全部让位 ---- */}
           <section className="panel panel--tight">
             <div className="row">
-              <input
-                className="field__input field__input--compact"
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                disabled={connected || connection.state === 'connecting'}
-                spellCheck={false}
-                placeholder={DEFAULT_SIGNALING_URL}
-                title="信令服务器地址"
-              />
+              {!inRoom && (
+                <input
+                  className="field__input field__input--compact"
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value)}
+                  maxLength={16}
+                  placeholder={t('conn.nickname')}
+                />
+              )}
               <button
                 type="button"
                 className={connected ? 'btn btn--ghost btn--shrink' : 'btn btn--primary btn--shrink'}
                 onClick={handleConnect}
               >
-                {connected || connection.state === 'connecting' ? '断开' : '连接'}
+                {connected || connection.state === 'connecting' ? t('conn.disconnect') : t('conn.connect')}
               </button>
             </div>
 
-            {!inRoom && (
-              <input
-                className="field__input field__input--compact"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                maxLength={16}
-                placeholder="昵称（留空自动生成）"
-              />
+            {/* 信令地址默认不露出来：它是「网络详情」—— 傻瓜流（粘贴邀请）会自动填，
+                手动用户点开再填。裸露在外既添乱又是截图泄露面。 */}
+            <div className="row">
+              <button
+                type="button"
+                className="btn btn--tiny"
+                onClick={() => setShowNetField((v) => !v)}
+              >
+                {showNetField ? t('conn.netSettingsHide') : t('conn.netSettings')}
+              </button>
+              {showNetField && <span className="hint hint--dim">{t('conn.serverAddr')}</span>}
+            </div>
+            {showNetField && (
+              <div className="row">
+                <input
+                  className="field__input field__input--compact"
+                  value={serverUrl}
+                  onChange={(e) => setServerUrl(e.target.value)}
+                  disabled={connected || connection.state === 'connecting'}
+                  spellCheck={false}
+                  placeholder={DEFAULT_SIGNALING_URL}
+                  title="信令服务器地址"
+                />
+              </div>
             )}
 
             {connection.detail && <p className="hint hint--warn">{connection.detail}</p>}
@@ -1218,26 +1458,26 @@ export default function App() {
                   onClick={() => setServerOpen((v) => !v)}
                 >
                   <span className="collapse__caret">{serverOpen ? '▾' : '▸'}</span>
-                  <span>本机信令服务</span>
+                  <span>{t('server.title')}</span>
                   <span
                     className={`dot dot--${
                       embeddedServer.state === 'running' ? 'ok' : 'idle'
                     }`}
                   />
                   <span className="collapse__state">
-                    {SERVER_STATE_LABEL[embeddedServer.state]}
-                    {tunnelUrl && ' · 异地已开'}
+                    {t(SERVER_STATE_LABEL[embeddedServer.state])}
+                    {tunnelUrl && t('server.remoteOn')}
                   </span>
                 </button>
 
-                <label className="switch" title="开启后本机就是一个信令服务器，别人可以连过来">
+                <label className="switch" title={t('server.enableTitle')}>
                   <input
                     type="checkbox"
                     checked={embeddedServer.enabled}
                     disabled={serverBusy}
                     onChange={(e) => void handleToggleServer(e.target.checked)}
                   />
-                  <span>启用</span>
+                  <span>{t('server.enable')}</span>
                 </label>
               </div>
 
@@ -1245,10 +1485,11 @@ export default function App() {
                 <div className="collapse__body">
                   <p className="hint hint--dim">
                     {embeddedServer.state === 'running'
-                      ? `端口 ${embeddedServer.port} · ${
-                          embeddedServer.dualStack ? 'IPv4 + IPv6' : '仅 IPv4'
-                        }`
-                      : '未在监听。本机自用可直接填 http://localhost:8080'}
+                      ? fmt('server.portInfo', {
+                          port: embeddedServer.port,
+                          stack: embeddedServer.dualStack ? t('server.stackDual') : t('server.stackV4'),
+                        })
+                      : t('server.notListening')}
                   </p>
 
                   {embeddedServer.detail && <p className="hint hint--warn">{embeddedServer.detail}</p>}
@@ -1260,38 +1501,33 @@ export default function App() {
                       {tunnel && (
                         <div className="tunnel">
                           <div className="tunnel__head">
-                            <span className="tunnel__title">异地访问</span>
+                            <span className="tunnel__title">{t('tunnel.title')}</span>
                             {tunnel.available ? (
-                              <label
-                                className="switch"
-                                title="开启后本机信令会经 Cloudflare 隧道暴露到公网"
-                              >
+                              <label className="switch" title={t('tunnel.enableTitle')}>
                                 <input
                                   type="checkbox"
                                   checked={tunnel.enabled}
                                   disabled={tunnelBusy}
                                   onChange={(e) => void handleToggleTunnel(e.target.checked)}
                                 />
-                                <span>启用</span>
+                                <span>{t('server.enable')}</span>
                               </label>
                             ) : (
-                              <span className="tag tag--warn">不可用</span>
+                              <span className="tag tag--warn">{t('tunnel.unavailable')}</span>
                             )}
                           </div>
 
                           <p className="hint hint--dim">
-                            {TUNNEL_STATE_LABEL[tunnel.state]}
-                            {tunnel.state === 'starting' && '（几秒到 40 秒）'}
+                            {t(TUNNEL_STATE_LABEL[tunnel.state])}
+                            {tunnel.state === 'starting' && t('tunnel.startingHint')}
                           </p>
                           {tunnel.detail && <p className="hint hint--warn">{tunnel.detail}</p>}
 
                           {tunnelUrl && (
                             <>
-                              <p className="hint hint--dim">这行是**发给对方**填的，本机别填它：</p>
+                              <p className="hint hint--dim">{t('tunnel.copyHint')}</p>
                               <p className="serverurl serverurl--remote">{tunnelUrl}</p>
-                              <p className="hint hint--warn">
-                                公网可达，知道的人都能连上信令服务。用完请关掉开关。
-                              </p>
+                              <p className="hint hint--warn">{t('tunnel.publicWarn')}</p>
                             </>
                           )}
                         </div>
@@ -1299,7 +1535,7 @@ export default function App() {
 
                       {embeddedServer.lanUrls.length > 0 && (
                         <>
-                          <p className="hint hint--dim">同一路由器 / 热点时填这个：</p>
+                          <p className="hint hint--dim">{t('tunnel.lanHint')}</p>
                           {embeddedServer.lanUrls.map((url) => (
                             <p key={url} className="serverurl">
                               {url}
@@ -1310,10 +1546,7 @@ export default function App() {
 
                       {publicServerUrls.length > 0 && (
                         <>
-                          <p className="hint hint--dim">
-                            公网地址（多数家庭网络连不上，需路由器放行入站；本机是双层 NAT，
-                            实测不通，除非你确认自己的网络支持）：
-                          </p>
+                          <p className="hint hint--dim">{t('tunnel.publicHint')}</p>
                           {publicServerUrls.map((url) => (
                             <p key={url} className="serverurl serverurl--dim">
                               {url}
@@ -1322,9 +1555,7 @@ export default function App() {
                         </>
                       )}
 
-                      <p className="hint hint--dim">
-                        首次启动 Windows 防火墙会弹窗，要点「允许访问」。
-                      </p>
+                      <p className="hint hint--dim">{t('tunnel.firewall')}</p>
                     </>
                   )}
                 </div>
@@ -1334,7 +1565,7 @@ export default function App() {
 
           {/* ---- 房间 ---- */}
           <section className="panel panel--tight">
-            <h2>房间</h2>
+            <h2>{t('room.title')}</h2>
 
             {!inRoom ? (
               <>
@@ -1345,15 +1576,15 @@ export default function App() {
                     onClick={() => void run(() => session.createRoom(nickname))}
                     disabled={!connected || busy}
                   >
-                    创建房间
+                    {t('room.create')}
                   </button>
                   <input
                     className="field__input field__input--code field__input--compact"
                     value={joinCode}
-                    onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                    maxLength={6}
-                    placeholder="房间码"
+                    onChange={(e) => handleJoinInputChange(e.target.value)}
+                    placeholder={t('room.codePlaceholder')}
                     spellCheck={false}
+                    title={t('room.codeTitle')}
                   />
                   <button
                     type="button"
@@ -1373,12 +1604,12 @@ export default function App() {
                     }}
                     disabled={!connected || busy || !joinCode.trim()}
                   >
-                    加入
+                    {t('room.join')}
                   </button>
                 </div>
 
-                {joinError && <p className="hint hint--warn">加入失败：{joinError}</p>}
-                {!connected && <p className="hint hint--warn">请先连接信令服务器</p>}
+                {joinError && <p className="hint hint--warn">{t('room.joinFailed')}{joinError}</p>}
+                {!connected && <p className="hint hint--warn">{t('room.needSignaling')}</p>}
               </>
             ) : (
               <>
@@ -1389,7 +1620,7 @@ export default function App() {
                     className={copied === 'code' ? 'btn btn--tiny btn--done' : 'btn btn--tiny'}
                     onClick={() => void copyRoomCode()}
                   >
-                    {copied === 'code' ? '已复制' : '复制'}
+                    {copied === 'code' ? t('room.copied') : t('room.copyCode')}
                   </button>
                   <button
                     type="button"
@@ -1398,9 +1629,9 @@ export default function App() {
                     }
                     onClick={() => void copyInvite()}
                     disabled={!inviteAddress}
-                    title="一次复制「信令地址 + 房间码」，对方照着填就能进"
+                    title={t('room.copyInviteTitle')}
                   >
-                    {copied === 'invite' ? '已复制' : '复制邀请'}
+                    {copied === 'invite' ? t('room.copied') : t('room.copyInvite')}
                   </button>
                 </div>
 
@@ -1412,14 +1643,14 @@ export default function App() {
                       <li key={peer.peerId} className="member">
                         <span className="member__name">
                           {peer.nickname}
-                          {isSelf && <span className="member__self">（我）</span>}
+                          {isSelf && <span className="member__self">{t('room.memberSelf')}</span>}
                         </span>
                         <span className="member__tags">
-                          {peer.isHost && <span className="tag tag--host">房主</span>}
-                          {isSelf && sharing && <span className="tag tag--live">共享中</span>}
+                          {peer.isHost && <span className="tag tag--host">{t('room.tagHost')}</span>}
+                          {isSelf && sharing && <span className="tag tag--live">{t('room.tagSharing')}</span>}
                           {!isSelf && (
                             <span className={`tag tag--link tag--link-${link?.state ?? 'new'}`}>
-                              {LINK_LABEL[link?.state ?? 'new']}
+                              {t(LINK_LABEL[link?.state ?? 'new'])}
                             </span>
                           )}
                         </span>
@@ -1434,7 +1665,7 @@ export default function App() {
                   onClick={() => void run(() => session.leaveRoom())}
                   disabled={busy}
                 >
-                  离开房间
+                  {t('room.leave')}
                 </button>
               </>
             )}
@@ -1442,7 +1673,7 @@ export default function App() {
 
           {/* ---- 语音 ---- */}
           <section className="panel panel--tight">
-            <h2>语音</h2>
+            <h2>{t('mic.title')}</h2>
             <div className="row">
               <button
                 type="button"
@@ -1450,40 +1681,41 @@ export default function App() {
                 onClick={() => void run(() => session.setMicEnabled(!micEnabled))}
                 disabled={busy}
               >
-                {micEnabled ? '关闭麦克风' : '开启麦克风'}
+                {micEnabled ? t('mic.on') : t('mic.off')}
               </button>
             </div>
             {micEnabled && micSettings && (
               <p className="hint hint--dim">
-                回声消除 {micSettings.echoCancellation ? '开' : '关'} · 降噪{' '}
-                {micSettings.noiseSuppression ? '开' : '关'} · 自动增益{' '}
-                {micSettings.autoGainControl ? '开' : '关'}
+                {t('mic.statsEcho')} {micSettings.echoCancellation ? t('mic.on2') : t('mic.off2')} · {t('mic.statsNs')}{' '}
+                {micSettings.noiseSuppression ? t('mic.on2') : t('mic.off2')} · {t('mic.statsAgc')}{' '}
+                {micSettings.autoGainControl ? t('mic.on2') : t('mic.off2')}
               </p>
             )}
             {/* 失败必须说出来。做成「失败了但按钮看着像开着」等于让用户对着空气说话 */}
             {micError && <p className="hint hint--warn">{micError}</p>}
             {!micEnabled && !micError && (
-              <p className="hint hint--dim">默认关着。开了才会占用录音设备，关了会真的把设备释放掉。</p>
+              <p className="hint hint--dim">{t('mic.hint')}</p>
             )}
           </section>
 
           {/* ---- 共享 ---- */}
           <section className="panel panel--tight">
-            <h2>共享画面</h2>
+            <h2>{t('share.title')}</h2>
 
             {sharing ? (
               <>
                 <p className="hint">
-                  正在共享：{captureLabel ?? '未知源'}
+                  {t('share.now')}
+                  {captureLabel ?? t('share.unknownSource')}
                   <span className={appAudioEnabled ? 'tag tag--live' : 'tag'}>
                     {appAudioEnabled
-                      ? (AUDIO_MODE_LABEL[audioMode ?? 'none'] ?? '含声音')
+                      ? t(AUDIO_MODE_LABEL[audioMode ?? 'none'] ?? 'audio.withSound')
                       : audioMode === 'none'
-                        ? '无声音'
-                        : '声音已关'}
+                        ? t('audio.tag.none')
+                        : t('share.audioOff')}
                   </span>
                   <span className={micEnabled ? 'tag tag--live' : 'tag'}>
-                    {micEnabled ? '麦克风开' : '麦克风关'}
+                    {micEnabled ? t('share.micOn') : t('share.micOff')}
                   </span>
                 </p>
 
@@ -1491,7 +1723,7 @@ export default function App() {
                     「继续无声」收起告警；换模式与停止走各自完整流程。 */}
                 {audioFailure && (
                   <div className="audio-failure" role="alert">
-                    <p className="audio-failure__title">无法捕获此应用声音。</p>
+                    <p className="audio-failure__title">{t('audioFail.title')}</p>
                     <p className="hint hint--dim">{audioFailure.message}</p>
                     <div className="row">
                       <button
@@ -1500,14 +1732,14 @@ export default function App() {
                         disabled={busy}
                         onClick={() => changeAudioMode('system')}
                       >
-                        改用全部电脑声音
+                        {t('audioFail.toSystem')}
                       </button>
                       <button
                         type="button"
                         className="btn btn--ghost"
                         onClick={dismissAudioFailure}
                       >
-                        继续共享（无声音）
+                        {t('audioFail.keepSilent')}
                       </button>
                       <button
                         type="button"
@@ -1517,12 +1749,10 @@ export default function App() {
                           session.stopShare();
                         }}
                       >
-                        取消共享
+                        {t('audioFail.cancel')}
                       </button>
                     </div>
-                    <p className="hint hint--dim">
-                      不会自动改用别的声音模式 —— 换成哪一种由你决定。
-                    </p>
+                    <p className="hint hint--dim">{t('audioFail.hint')}</p>
                   </div>
                 )}
 
@@ -1535,7 +1765,7 @@ export default function App() {
                       session.stopShare();
                     }}
                   >
-                    停止共享
+                    {t('share.stop')}
                   </button>
                   <button
                     type="button"
@@ -1543,7 +1773,7 @@ export default function App() {
                     onClick={() => void toggleSourcePicker()}
                     disabled={busy}
                   >
-                    {pickerOpen ? '收起' : '更换源'}
+                    {pickerOpen ? t('share.pickHide') : t('share.pickMore')}
                   </button>
                   {/* 暂停/恢复发送应用声音：只切这一条轨（replaceTrack(null)），画面不受影响、
                       也不重新采集。想换「采哪一种声音」用下面的模式选择。 */}
@@ -1552,9 +1782,9 @@ export default function App() {
                     className="btn btn--ghost"
                     onClick={() => session.setAppAudioEnabled(!appAudioEnabled)}
                     disabled={!hasAudio || busy}
-                    title={hasAudio ? '只切应用声音这一路，画面不受影响' : '这次共享没采到应用声音'}
+                    title={hasAudio ? t('share.toggleAppAudioTitleOk') : t('share.toggleAppAudioTitleNo')}
                   >
-                    {appAudioEnabled ? '关闭应用声音' : '开启应用声音'}
+                    {appAudioEnabled ? t('share.toggleAppAudioOff') : t('share.toggleAppAudioOn')}
                   </button>
                   {/* 隐藏的是本机预览格：不碰轨、不碰协商，共享照常发。
                       「是否显示自己」是 M4 布局项里最后补的一块。 */}
@@ -1562,16 +1792,16 @@ export default function App() {
                     type="button"
                     className="btn btn--ghost"
                     onClick={() => setShowSelf((v) => !v)}
-                    title="只隐藏本机的预览格，不影响共享出去的画面"
+                    title={t('share.hideSelfTitle')}
                   >
-                    {showSelf ? '隐藏自己' : '显示自己'}
+                    {showSelf ? t('share.hideSelf') : t('share.showSelf')}
                   </button>
                 </div>
 
                 {/* 共享声音的三种正式状态。共享中切换 = 用同一个源按新模式重采
                     （画面会闪一下）。屏幕源没有所属进程，选它会自动落回「全部电脑」。 */}
-                <div className="row row--modes" role="radiogroup" aria-label="共享声音模式">
-                  <span className="hint hint--dim">声音模式：</span>
+                <div className="row row--modes" role="radiogroup" aria-label={t('share.modeAria')}>
+                  <span className="hint hint--dim">{t('share.modeLabel')}</span>
                   {UI_AUDIO_MODES.map(({ mode, label, title }) => (
                     <button
                       key={mode}
@@ -1581,23 +1811,41 @@ export default function App() {
                       }
                       onClick={() => changeAudioMode(mode)}
                       disabled={busy}
-                      title={title}
+                      title={t(title)}
                     >
-                      {label}
+                      {t(label)}
                     </button>
                   ))}
                 </div>
 
+                {/* 共享帧率：编码 maxFramerate 与采集端共同的上限。发送方本机设置，
+                    不走观看者请求；共享中切换即时生效（setParameters），不重协商。 */}
+                <div className="row row--modes" role="radiogroup" aria-label={t('share.fpsAria')}>
+                  <span className="hint hint--dim">{t('share.fpsLabel')}</span>
+                  {UI_FPS_OPTIONS.map((fps) => (
+                    <button
+                      key={fps}
+                      type="button"
+                      className={shareFps === fps ? 'btn btn--mode btn--mode-on' : 'btn btn--mode'}
+                      onClick={() => changeShareFps(fps)}
+                      title={t('share.fpsTitle')}
+                    >
+                      {fps} {t('share.fpsUnit')}
+                    </button>
+                  ))}
+                </div>
+                <p className="hint hint--dim">{t('share.fpsHint')}</p>
+
                 {pickerOpen && sourceError && <p className="hint hint--warn">{sourceError}</p>}
                 {pickerOpen && sourceList}
                 {pickerOpen && sources.length === 0 && !sourceError && (
-                  <p className="hint hint--dim">没有可用的窗口或屏幕。</p>
+                  <p className="hint hint--dim">{t('share.noSources')}</p>
                 )}
               </>
             ) : (
               <>
-                <div className="row row--modes" role="radiogroup" aria-label="共享声音模式">
-                  <span className="hint hint--dim">声音模式：</span>
+                <div className="row row--modes" role="radiogroup" aria-label={t('share.modeAria')}>
+                  <span className="hint hint--dim">{t('share.modeLabel')}</span>
                   {UI_AUDIO_MODES.map(({ mode, label, title }) => (
                     <button
                       key={mode}
@@ -1606,15 +1854,29 @@ export default function App() {
                         audioModeChoice === mode ? 'btn btn--mode btn--mode-on' : 'btn btn--mode'
                       }
                       onClick={() => setAudioModeChoice(mode)}
-                      title={title}
+                      title={t(title)}
                     >
-                      {label}
+                      {t(label)}
                     </button>
                   ))}
                 </div>
-                <p className="hint hint--dim">
-                  默认「仅此应用」：只共享所选窗口那个应用的声音。选屏幕源时会自动改用「全部电脑」。
-                </p>
+                <p className="hint hint--dim">{t('share.modeDefaultHint')}</p>
+
+                {/* 未共享时也可预设帧率：只记偏好，startShare 时应用 */}
+                <div className="row row--modes" role="radiogroup" aria-label={t('share.fpsAria')}>
+                  <span className="hint hint--dim">{t('share.fpsLabel')}</span>
+                  {UI_FPS_OPTIONS.map((fps) => (
+                    <button
+                      key={fps}
+                      type="button"
+                      className={shareFps === fps ? 'btn btn--mode btn--mode-on' : 'btn btn--mode'}
+                      onClick={() => changeShareFps(fps)}
+                      title={t('share.fpsTitle')}
+                    >
+                      {fps} {t('share.fpsUnit')}
+                    </button>
+                  ))}
+                </div>
 
                 <div className="row">
                   <button
@@ -1623,7 +1885,7 @@ export default function App() {
                     onClick={() => void refreshSources()}
                     disabled={!inRoom}
                   >
-                    枚举窗口 / 屏幕
+                    {t('share.enumerate')}
                   </button>
                   <button
                     type="button"
@@ -1635,30 +1897,16 @@ export default function App() {
                       })
                     }
                     disabled={!inRoom}
-                    title="用合成的动画画面代替真实采集，便于自动化验证链路"
+                    title={t('share.testSourceTitle')}
                   >
-                    合成源
+                    {t('share.testSource')}
                   </button>
                 </div>
 
-                {!inRoom && <p className="hint hint--dim">进入房间后才能共享</p>}
+                {!inRoom && <p className="hint hint--dim">{t('share.needRoom')}</p>}
                 {sourceError && <p className="hint hint--warn">{sourceError}</p>}
                 {sourceList}
               </>
-            )}
-
-            {/* ARCHITECTURE.md 4.5 要求的能力告知：这是使用层面的风险，代码绕不过去。
-                默认收成一行，免得每次共享都占掉半屏。 */}
-            <button type="button" className="notice__toggle" onClick={() => setRiskOpen((v) => !v)}>
-              <span className="collapse__caret">{riskOpen ? '▾' : '▸'}</span>
-              反作弊风险说明
-            </button>
-            {riskOpen && (
-              <p className="notice__body">
-                部分游戏（EAC / BattlEye / Vanguard 等）会把画面捕获判为异常操作，存在封号风险；
-                另一些会直接阻止捕获，表现为黑屏或纯色画面。这属于游戏侧的限制，本软件无法绕过。
-                若全屏下抓不到画面，多半是这款游戏用了独占全屏，改成无边框窗口化即可。
-              </p>
             )}
           </section>
 
@@ -1671,7 +1919,7 @@ export default function App() {
                 onClick={() => setLogsOpen((v) => !v)}
               >
                 <span className="collapse__caret">{logsOpen ? '▾' : '▸'}</span>
-                <span>日志</span>
+                <span>{t('log.title')}</span>
                 <span className="badge">{state.logs.length}</span>
               </button>
             </div>
@@ -1679,7 +1927,7 @@ export default function App() {
             {logsOpen && (
               <div className="logs logs--short">
                 {state.logs.length === 0 ? (
-                  <p className="hint hint--dim">暂无日志</p>
+                  <p className="hint hint--dim">{t('log.empty')}</p>
                 ) : (
                   state.logs.map((line, i) => (
                     <div key={`${i}-${line}`} className="logs__line">
@@ -1690,6 +1938,27 @@ export default function App() {
               </div>
             )}
           </section>
+        </div>
+        )}
+
+        {/* 侧栏拖拽条：条上按住左右拖调宽度，中间把手一键收起/展开侧栏。
+            收起后侧栏整列让位给画面区，把手仍留在这里点得回来。 */}
+        <div
+          className={`app__resizer${sideDragging ? ' app__resizer--dragging' : ''}`}
+          onPointerDown={onResizerDown}
+          onPointerMove={onResizerMove}
+          onPointerUp={onResizerUp}
+          onPointerCancel={onResizerUp}
+          title={sideCollapsed ? t('sidebar.expand') : t('sidebar.resizeTitle')}
+        >
+          <div
+            className="app__resizer__grip"
+            role="button"
+            aria-label={sideCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+            onClick={toggleSideCollapsed}
+          >
+            {sideCollapsed ? '⟩' : '⟨'}
+          </div>
         </div>
 
         {/* 浮窗里整块画面区就是**拖动区**：窗口是 `setFocusable(false)` 的，标题栏拖动
@@ -1724,25 +1993,21 @@ export default function App() {
                 className={`floatmenu${floatMenuOpen ? ' floatmenu--open' : ''}`}
                 onClick={() => setFloatMenuOpen((open) => !open)}
                 aria-expanded={floatMenuOpen}
-                title={
-                  floatMenuOpen
-                    ? '收起控件（透明度 / 拆分 / 退出浮窗都在那条上）'
-                    : '展开控件：透明度 / 拆成小窗 / 退出浮窗（快捷键 Ctrl+Alt+G）'
-                }
+                title={floatMenuOpen ? t('float.menuCollapseTitle') : t('float.menuExpandTitle')}
               >
                 <span className="floatmenu__lines" aria-hidden="true">
                   <span />
                   <span />
                   <span />
                 </span>
-                <span className="floatmenu__text">{floatMenuOpen ? '收起' : '控件'}</span>
+                <span className="floatmenu__text">{floatMenuOpen ? t('float.menuCollapse') : t('float.menuEntry')}</span>
               </button>
 
               <div className={`floatbar${floatMenuOpen ? ' floatbar--pinned' : ''}`}>
                 {/* 同一个拖动把手。`frame: false` 之后标题栏没了，这块画面区就是
                     唯一的拖动区 —— 摆个把手，别让人靠猜。 */}
-                <span className="bar__grip" title="按住画面任意处拖动这个浮窗" />
-                <span className="floatbar__label">透明度</span>
+                <span className="bar__grip" title={t('float.barGripTitle')} />
+                <span className="floatbar__label">{t('float.opacity')}</span>
                 <input
                   type="range"
                   className="floatbar__range"
@@ -1751,7 +2016,7 @@ export default function App() {
                   step={5}
                   value={Math.round((floatWindow?.opacity ?? 1) * 100)}
                   onChange={(e) => void handleOpacity(Number(e.target.value) / 100)}
-                  title="调低能让后面的游戏透出来，代价是共享画面也一起变淡"
+                  title={t('float.opacityTitle')}
                 />
                 <span className="floatbar__value">
                   {Math.round((floatWindow?.opacity ?? 1) * 100)}%
@@ -1764,20 +2029,18 @@ export default function App() {
                     className="floatbar__exit"
                     onClick={() => void handleToggleTiles(true)}
                     disabled={tilesBusy}
-                    title={`每一路画面拆成一个独立小窗，各自拖动、各自缩放、各自置顶。窗数 = 总人数 − 1 = ${
-                      floatPeers.length
-                    } 个（自己这一路本地预览就能看）。画面仍然由这个窗口搬给它们，所以它会收成一条贴底的控制条 —— 声音和房间码都在那条上。`}
+                    title={fmt('float.splitTitle', { n: floatPeers.length })}
                   >
-                    拆成 {floatPeers.length} 个小窗
+                    {fmt('float.split', { n: floatPeers.length })}
                   </button>
                 )}
                 <button
                   type="button"
                   className="floatbar__exit"
                   onClick={() => void handleToggleFloat(false)}
-                  title="回到正常界面（全局快捷键同效）"
+                  title={t('float.exitTitle')}
                 >
-                  退出浮窗
+                  {t('float.exit')}
                 </button>
               </div>
 
@@ -1786,15 +2049,19 @@ export default function App() {
                   自绘控件没人试过就等于不存在。所以它跟 `.floatmenu` 一样**常驻半透明**，
                   不再是 hover 才露头（那只有老手才知道能缩放）。拆分模式下不给它
                   （那时主窗口被收成固定高度的控制条，改高度没有意义）。 */}
-              <div className="floatgrip" title="拖动改大小" {...floatGripProps} />
+              <div className="floatgrip" title={t('float.gripTitle')} {...floatGripProps} />
             </>
           )}
           {!inRoom ? (
             <div className="stage__empty">
-              <p>进入房间后，这里显示其他玩家的画面。</p>
-              <p className="hint hint--dim">
-                本机联调：再开一个客户端（<code>npm run dev:desktop</code>）用同一房间码加入。
-              </p>
+              <p>{t('float.enterRoomHint')}</p>
+              {/* 联调提示只给开发模式（vite dev server）——安装包用户看到
+                  `npm run dev:desktop` 只会困惑，这不是他们该执行的命令 */}
+              {import.meta.env.DEV && (
+                <p className="hint hint--dim">
+                  本机联调：再开一个客户端（<code>npm run dev:desktop</code>）用同一房间码加入。
+                </p>
+              )}
             </div>
           ) : isFloat && splitActive ? (
             /* 拆分模式：主窗口已经被主进程收成一条贴底的窄控制条（620x76）。
@@ -1810,38 +2077,38 @@ export default function App() {
                     哪一块就变成「从这儿开始拖不动」（和小窗名字牌同一种坑）。
                     所以展开靠「按位移判点击」：按住没动过 = 点了一下 = 展开，
                     动过 = 拖动（float-drag.ts 的 `floatBallProps`，悬浮球都是这个交互）。 */
-                <div className="hostball" title="单击展开控制条 · 按住可拖到别处">
+                <div className="hostball" title={t('bar.ballTitle')}>
                   <span className="hostball__dot" />
-                  <span className="hostball__text">{tiles?.tiles.length ?? 0} 个小窗</span>
-                  <span className="hostball__expand">展开</span>
+                  <span className="hostball__text">{fmt('bar.ballTiles', { n: tiles?.tiles.length ?? 0 })}</span>
+                  <span className="hostball__expand">{t('bar.ballExpand')}</span>
                 </div>
               ) : (
                 <div className="hostbar">
                   {/* 看得见的拖动把手。
-                      
+
                       整条本来就能拖（`.app__stage` 挂着 floatDragProps），但「能拖」这件事
                       得有人告诉用户：窗口现在是 `frame: false` 的，**没有标题栏可拖了**，
                       不摆个把手，用户只会继续以为拖不动（2026-09-17 两次实机反馈都卡在这）。 */}
-                  <span className="bar__grip" title="按住这条，把控制窗拖到不挡视线的地方" />
+                  <span className="bar__grip" title={t('bar.gripTitle')} />
                   {/* 收起入口。摆在这条最前面：它是个「把整条收掉」的动作，
                       贴在条的头上有「折起来」的语感；摆到末尾会和「合并/退出」混成一排。 */}
                   <button
                     type="button"
                     className="hostbar__act hostbar__collapse"
                     onClick={() => void handleToggleBarCollapsed(true)}
-                    title="把这条收成屏幕右下角的一颗小球 —— 画面不受影响，单击小球就展开"
+                    title={t('bar.collapseTitle')}
                   >
-                    收起
+                    {t('bar.collapse')}
                   </button>
                   {room && (
-                    <span className="hostbar__code" title="房间码">
+                    <span className="hostbar__code" title={t('room.codePlaceholder')}>
                       {room.roomCode}
                     </span>
                   )}
                   <span className="hostbar__hint">
-                    {tiles?.tiles.length ?? 0} 个小窗 · 按住这条挪本窗
+                    {fmt('bar.tilesInfo', { n: tiles?.tiles.length ?? 0 })}
                   </span>
-                  <span className="hostbar__label">透明度</span>
+                  <span className="hostbar__label">{t('bar.opacity')}</span>
                   <input
                     type="range"
                     className="hostbar__range"
@@ -1850,7 +2117,7 @@ export default function App() {
                     step={5}
                     value={Math.round((floatWindow?.opacity ?? 1) * 100)}
                     onChange={(e) => void handleOpacity(Number(e.target.value) / 100)}
-                    title="调低能让后面的游戏透出来，代价是画面也一起变淡"
+                    title={t('bar.opacityTitle')}
                   />
                   <span className="hostbar__value">
                     {Math.round((floatWindow?.opacity ?? 1) * 100)}%
@@ -1860,17 +2127,17 @@ export default function App() {
                     className="hostbar__act hostbar__act--primary"
                     onClick={() => void handleToggleTiles(false)}
                     disabled={tilesBusy}
-                    title="把小窗收回来，恢复成一个窗口"
+                    title={t('bar.mergeTitle')}
                   >
-                    合并成一个窗口
+                    {t('bar.merge')}
                   </button>
                   <button
                     type="button"
                     className="hostbar__act"
                     onClick={() => void handleToggleFloat(false)}
-                    title="回到正常界面（全局快捷键同效）"
+                    title={t('bar.exitTitle')}
                   >
-                    退出浮窗
+                    {t('bar.exit')}
                   </button>
                 </div>
               )}
@@ -1894,8 +2161,8 @@ export default function App() {
 
               {floatPeers.length === 0 ? (
                 <div className="stage__empty">
-                  <p>还没有人在共享画面。</p>
-                  <p className="hint hint--dim">浮窗只摆正在共享的那几路。</p>
+                  <p>{t('float.emptyNoShare')}</p>
+                  <p className="hint hint--dim">{t('float.emptyOnlyShared')}</p>
                 </div>
               ) : focusedPeerId && floatPeers.some((p) => p.peerId === focusedPeerId) ? (
                 /* 放大态：主画面吃满，其余几路缩成底边一条。
@@ -2010,6 +2277,7 @@ function VideoTile({
   onVideoEl,
   variant,
 }: VideoTileProps) {
+  const t = useI18n();
   const ref = useRef<HTMLVideoElement | null>(null);
   const voiceRef = useRef<HTMLAudioElement | null>(null);
   const appAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -2138,14 +2406,14 @@ function VideoTile({
 
       {!hasFrames && (
         <div className="tile__placeholder">
-          <span>{stream ? '等待画面…' : '未收到画面'}</span>
+          <span>{stream ? t('tile.waiting') : t('tile.noStream')}</span>
         </div>
       )}
 
       <div className="tile__header">
         <span className="tile__title">{title}</span>
-        {!compact && self && <span className="tag tag--live">本地</span>}
-        {!compact && !self && !remoteSharing && <span className="tag">未共享</span>}
+        {!compact && self && <span className="tag tag--live">{t('tile.tagLocal')}</span>}
+        {!compact && !self && !remoteSharing && <span className="tag">{t('tile.tagNotSharing')}</span>}
         {/* 放大不能只留双击：窗口刚被激活时第一次点击会被系统吞掉，
             双击就变成了「点了没反应」。给一个看得见的按钮，
             规则也从「得知道有这回事」变成「一眼能看见」。 */}
@@ -2158,13 +2426,13 @@ function VideoTile({
               onToggleFocus();
             }}
             onDoubleClick={(e) => e.stopPropagation()}
-            title={focused ? '还原成网格' : '把这一路放大到主画面'}
+            title={focused ? t('tile.restore') : t('tile.enlargeTitle')}
           >
-            {focused ? '还原' : '放大'}
+            {focused ? t('tile.restore') : t('tile.enlarge')}
           </button>
         )}
-        {!compact && !self && voiceTrack && <span className="tag tag--live">语音</span>}
-        {!compact && !self && appAudioTrack && <span className="tag tag--live">共享声</span>}
+        {!compact && !self && voiceTrack && <span className="tag tag--live">{t('tile.tagVoice')}</span>}
+        {!compact && !self && appAudioTrack && <span className="tag tag--live">{t('tile.tagAppAudio')}</span>}
         {!compact && !self && onToggleVolPanel && (voiceTrack || appAudioTrack) && (
           <div className="tile__volwrap">
             <button
@@ -2175,15 +2443,15 @@ function VideoTile({
                 onToggleVolPanel();
               }}
               onDoubleClick={(e) => e.stopPropagation()}
-              title="分开调这一路的语音音量与共享声音音量"
+              title={t('tile.volumeTitle')}
             >
-              音量
+              {t('tile.volume')}
             </button>
             {volOpen && audioPref && onAudioPref && (
               <div className="tile__volpanel" onClick={(e) => e.stopPropagation()}>
                 {voiceTrack && (
                   <label className="tile__volrow">
-                    <span>语音</span>
+                    <span>{t('tile.voice')}</span>
                     <input
                       type="range"
                       min={0}
@@ -2196,15 +2464,15 @@ function VideoTile({
                       type="button"
                       className={audioPref.voiceMuted ? 'tile__voldown' : 'tag'}
                       onClick={() => onAudioPref({ voiceMuted: !audioPref.voiceMuted })}
-                      title="只静音他的麦克风，不影响共享声音"
+                      title={t('tile.muteVoiceTitle')}
                     >
-                      {audioPref.voiceMuted ? '已静音' : '开'}
+                      {audioPref.voiceMuted ? t('tile.muted') : t('tile.on')}
                     </button>
                   </label>
                 )}
                 {appAudioTrack && (
                   <label className="tile__volrow">
-                    <span>共享声</span>
+                    <span>{t('tile.appAudio')}</span>
                     <input
                       type="range"
                       min={0}
@@ -2217,9 +2485,9 @@ function VideoTile({
                       type="button"
                       className={audioPref.appMuted ? 'tile__voldown' : 'tag'}
                       onClick={() => onAudioPref({ appMuted: !audioPref.appMuted })}
-                      title="只静音他的共享声音，不影响语音"
+                      title={t('tile.muteAppAudioTitle')}
                     >
-                      {audioPref.appMuted ? '已静音' : '开'}
+                      {audioPref.appMuted ? t('tile.muted') : t('tile.on')}
                     </button>
                   </label>
                 )}
@@ -2227,9 +2495,9 @@ function VideoTile({
             )}
           </div>
         )}
-        {!compact && !self && hasAudio === false && <span className="tag">无声音</span>}
+        {!compact && !self && hasAudio === false && <span className="tag">{t('tile.tagNoAudio')}</span>}
         {!compact && (
-          <span className={`tag tag--link-${linkState}`}>{LINK_LABEL[linkState] ?? linkState}</span>
+          <span className={`tag tag--link-${linkState}`}>{LINK_LABEL[linkState] ? t(LINK_LABEL[linkState]) : linkState}</span>
         )}
       </div>
 
@@ -2247,12 +2515,12 @@ function VideoTile({
                   ? route.relay
                     ? `TURN(${route.localType})`
                     : `P2P(${route.localType})`
-                  : '路径检测中'}
+                  : t('tile.pathDetecting')}
               </span>
               {route?.currentRoundTripTime != null && <span>{route.currentRoundTripTime} ms</span>}
             </>
           ) : (
-            <span className="hint hint--dim">{detail || '统计采集中…'}</span>
+            <span className="hint hint--dim">{detail || t('tile.statsCollecting')}</span>
           )}
         </div>
       )}

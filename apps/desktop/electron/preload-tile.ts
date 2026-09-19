@@ -31,8 +31,11 @@ export interface TileApi {
   toggleMute(peerId: string): void;
   /** 主窗口把这一路的静音状态推过来，保证按钮不会说反话 */
   onMuted(callback: (muted: boolean) => void): () => void;
-  /** 拖动窗口。传的是目标左上角在屏幕上的坐标 */
-  moveTo(x: number, y: number): void;
+  /**
+   * 拖动窗口。传的是目标左上角在屏幕上的坐标，以及按下时锁定的客户区尺寸
+   * （主进程直接按它 setBounds，不再每帧读 getBounds —— 防「拖动时变大」）。
+   */
+  moveTo(x: number, y: number, width: number, height: number): void;
   resizeTo(width: number, height: number): void;
   /** 上报画面尺寸，帧泵按它缩放 */
   reportSize(width: number, height: number): void;
@@ -78,8 +81,8 @@ const api: TileApi = {
       mutedListeners.delete(callback);
     };
   },
-  moveTo(x, y) {
-    ipcRenderer.send('float:tile-move-to', { x, y });
+  moveTo(x, y, width, height) {
+    ipcRenderer.send('float:tile-move-to', { x, y, width, height });
   },
   resizeTo(width, height) {
     ipcRenderer.send('float:tile-resize-to', { width, height });

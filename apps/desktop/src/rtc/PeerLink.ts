@@ -3,6 +3,8 @@ import {
   ROLE_MEDIA_KIND,
   TRACK_ROLES,
   QualityLevel,
+  computeMaxBitrate,
+  computeMaxFramerate,
   computeScaleResolutionDownBy,
   getProfile,
   roleForMid,
@@ -133,6 +135,8 @@ export interface PeerLinkOptions {
    * 写死 1080 会让 1440p/768p 屏幕上的档位全部错位。
    */
   getSourceHeight?: () => number | null;
+  /** 同上，码率自适应换算需要源像素量（宽 × 高） */
+  getSourceWidth?: () => number | null;
   onStateChange?: (state: LinkState, detail?: string) => void;
   onRemoteStream?: (stream: MediaStream) => void;
   /** 远端三条轨按角色上报。接收侧要分别控制语音 / 应用声音时读这个 */
@@ -157,6 +161,7 @@ export class PeerLink {
   #polite: boolean;
   #initiator: boolean;
   #getSourceHeight: () => number | null;
+  #getSourceWidth: () => number | null;
   #onStateChange: (state: LinkState, detail?: string) => void;
   #onRemoteStream: (stream: MediaStream) => void;
   #onRemoteTracks: (tracks: RemoteTracks) => void;
@@ -173,6 +178,8 @@ export class PeerLink {
   #remoteTracks: RemoteTracks = emptyRemoteTracks();
   #remoteStream: MediaStream | null = null;
   #desiredQuality: QualityLevel = DEFAULT_QUALITY;
+  /** 用户选择的共享帧率（30/60/120）；null = 未选择，按档位默认走 */
+  #userFps: number | null = null;
   #appliedQuality: QualityLevel | null = null;
   #qualityLogDone = false;
   #directionRepairAttempts = 0;
@@ -187,6 +194,7 @@ export class PeerLink {
     this.remotePeerId = opts.remotePeerId;
     this.#signaling = opts.signaling;
     this.#getSourceHeight = opts.getSourceHeight ?? (() => null);
+    this.#getSourceWidth = opts.getSourceWidth ?? (() => null);
     this.#onStateChange = opts.onStateChange ?? (() => undefined);
     this.#onRemoteStream = opts.onRemoteStream ?? (() => undefined);
     this.#onRemoteTracks = opts.onRemoteTracks ?? (() => undefined);
@@ -659,6 +667,16 @@ export class PeerLink {
     await this.#applyQuality();
   }
 
+  /**
+   * 用户改了共享帧率（30/60/120）。所有链路共用一个采集源，
+   * 所以帧率是全局偏好，每条链路的编码上限同步更新。
+   */
+  async setUserFps(fps: number): Promise<void> {
+    if (this.#userFps === fps) return;
+    this.#userFps = fps;
+    await this.#applyQuality();
+  }
+
   async #applyQuality(): Promise<void> {
     if (this.#closed) return;
 
@@ -672,10 +690,12 @@ export class PeerLink {
     }
 
     const profile = getProfile(this.#desiredQuality);
-    const scaleDown = computeScaleResolutionDownBy(
-      this.#getSourceHeight() ?? sender.track?.getSettings().height ?? null,
-      profile.targetHeight,
-    );
+    const sourceWidth = this.#getSourceWidth() ?? sender.track?.getSettings().width ?? null;
+    const sourceHeight = this.#getSourceHeight() ?? sender.track?.getSettings().height ?? null;
+    const scaleDown = computeScaleResolutionDownBy(sourceHeight, profile.targetHeight);
+    const userFps = this.#userFps ?? profile.maxFramerate;
+    const maxFramerate = computeMaxFramerate(profile, userFps);
+    const maxBitrate = computeMaxBitrate(profile, sourceWidth, sourceHeight, userFps);
 
     try {
       const params = sender.getParameters();
@@ -683,15 +703,15 @@ export class PeerLink {
       if (!params.encodings || params.encodings.length === 0) {
         throw new Error('encodings 尚未协商完成');
       }
-      params.encodings[0].maxBitrate = profile.maxBitrate;
-      params.encodings[0].maxFramerate = profile.maxFramerate;
+      params.encodings[0].maxBitrate = maxBitrate;
+      params.encodings[0].maxFramerate = maxFramerate;
       params.encodings[0].scaleResolutionDownBy = scaleDown;
       await sender.setParameters(params);
 
       this.#appliedQuality = this.#desiredQuality;
       this.#log(
         `画质 ${this.remotePeerId} → ${profile.label}（scaleDown=${scaleDown.toFixed(3)}，` +
-          `base=${this.#getSourceHeight() ?? 'unknown'}p）`,
+          `base=${sourceHeight ?? 'unknown'}p，fps≤${maxFramerate}，cap=${Math.round(maxBitrate / 1000)}k）`,
       );
     } catch (err) {
       // 首次协商完成前必然落到这里，属预期路径，不打错误日志污染诊断

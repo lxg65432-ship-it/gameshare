@@ -1,6 +1,6 @@
 {
   "name": "@game-share/desktop",
-  "version": "1.0.0",
+  "version": "1.1.5",
   "private": true,
   "description": "GameShare 桌面客户端",
   "main": "dist-electron/main.cjs",
@@ -36,7 +36,7 @@
     "socket.io-client": "^4.8.1",
     "vite": "^6.0.7"
   },
-  "//extraResources": "build.extraResources 把 tools/cloudflared.exe（52.4MB）放进安装包的 resources/，由 electron/tunnel.ts 用 process.resourcesPath 定位 —— 它是异地访问隧道的唯一实现（本机双层 NAT，公网 IPv6 实测不通）。代价是安装包从 ~78MB 涨到 ~130MB，这是为「对方什么都不用装」付的。注意：这条说明必须留在顶层，写成 build 对象里的 \"//extraResources\" 会被 electron-builder 的 schema 判为未知属性、整个打包直接失败（2026-09-17 踩过）。",
+  "//extraResources": "build.extraResources 把 tools/cloudflared.exe（52.4MB）放进安装包的 resources/，由 electron/tunnel.ts 用 process.resourcesPath 定位 —— 它是异地访问隧道的唯一实现（本机双层 NAT，公网 IPv6 实测不通）。代价是安装包从 ~78MB 涨到 ~130MB，这是为「对方什么都不用装」付的。README×2 与 LICENSE 也随 extraResources 进 resources/（开源作品分发的标准件，用户装完在安装目录就能看）—— from 指向仓库根文件本身，**每次打包自动取最新内容，改 README 不用动这条配置**。注意：这条说明必须留在顶层，写成 build 对象里的 \"//extraResources\" 会被 electron-builder 的 schema 判为未知属性、整个打包直接失败（2026-09-17 踩过）。",
   "build": {
     "appId": "com.gameshare.desktop",
     "productName": "GameShare",
@@ -54,6 +54,18 @@
       {
         "from": "../../tools/cloudflared.exe",
         "to": "cloudflared.exe"
+      },
+      {
+        "from": "../../README.md",
+        "to": "README.md"
+      },
+      {
+        "from": "../../README.en.md",
+        "to": "README.en.md"
+      },
+      {
+        "from": "../../LICENSE",
+        "to": "LICENSE"
       },
       {
         "from": "../../node_modules/koffi",

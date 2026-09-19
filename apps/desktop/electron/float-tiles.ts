@@ -712,9 +712,24 @@ export function registerFloatTilesHandlers(): void {
     const tile = [...tiles.values()].find((t) => t.win.webContents === event.sender);
     if (!tile || tile.win.isDestroyed()) return;
     if (!payload || typeof payload !== 'object') return;
-    const { x, y } = payload as { x?: unknown; y?: unknown };
+    const { x, y, width, height } = payload as {
+      x?: unknown;
+      y?: unknown;
+      width?: unknown;
+      height?: unknown;
+    };
     if (typeof x !== 'number' || typeof y !== 'number') return;
-    tile.win.setBounds({ ...tile.win.getBounds(), x: Math.round(x), y: Math.round(y) });
+    // 尺寸用渲染层锁定的值，不展开 getBounds() —— 与主窗口 float:move-to 同一条
+    // 理由：非 100% 缩放屏上逐帧往返的取整误差会累积成「拖动时小窗变大」。
+    if (typeof width !== 'number' || typeof height !== 'number' || width <= 0 || height <= 0) {
+      return;
+    }
+    tile.win.setBounds({
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.round(width),
+      height: Math.round(height),
+    });
   });
 
   ipcMain.on('float:tile-resize-to', (event, payload: unknown) => {
