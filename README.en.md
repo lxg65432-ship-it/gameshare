@@ -6,6 +6,10 @@
 > Play with friends a thousand miles away — and it feels like they're sitting
 > right next to you.
 
+![GameShare main window](docs/screenshots/main-window.png)
+
+![Float overlay above a fullscreen game](docs/screenshots/float-overlay.jpg)
+
 A few of my friends and I play different games in different homes, and we wanted
 to see what everyone else is playing. That is the whole idea behind this tool:
 share your game window, see your friends' game windows, get on with the game.
