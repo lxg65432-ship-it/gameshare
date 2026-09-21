@@ -17,7 +17,7 @@
 每个人要发送的路数越多（8 人 = 每人同时发 7 路 ≈ 42Mbps 上行 + 7 路硬编码），
 网络或显卡撑不住时画面会先卡——实际用多少人，取决于你们的上行带宽。
 
-当前版本 v1.2.0。后续计划（以及几件明确不做的事）见 `docs/ROADMAP.md`。
+当前版本 v1.3.0。后续计划（以及几件明确不做的事）见 `docs/ROADMAP.md`。
 
 ## 功能
 
@@ -114,7 +114,7 @@ npm run dev:desktop    # 启动客户端（Vite + Electron，改代码热更新�
 | `diagnose-capture.bat` | 「窗口明明开着但列表里没有」的诊断工具 |
 | `tunnel.bat` | 手动起异地隧道（客户端里已有开关，通常不需要） |
 
-打包产物在 `apps/desktop/release/`：`GameShare Setup 1.2.0.exe`（安装包）
+打包产物在 `apps/desktop/release/`：`GameShare Setup 1.3.0.exe`（安装包）
 或 `win-unpacked/GameShare.exe`（免安装版）。
 
 > bat 会在 `npm` 不在 PATH 时按 `GAMESHARE_NODE_DIR` 环境变量 → PATH 的顺序找

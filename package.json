@@ -1,6 +1,6 @@
 {
   "name": "game-share",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "轻量级 Windows 多人游戏画面共享工具（WebRTC P2P Mesh）",
   "workspaces": [
