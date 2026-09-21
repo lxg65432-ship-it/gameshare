@@ -1132,14 +1132,12 @@ function groupStatic() {
   const viaHelper = (app.match(/await writeClipboard\(/g) ?? []).length;
   check(
     '渲染层的复制只走 writeClipboard → gameShare.clipboard（没有 await navigator.clipboard）',
-    rendererCalls === 0 && app.includes('gameShare?.clipboard') && viaHelper === 2,
-    `navigator 调用 ${rendererCalls} 处、走 writeClipboard ${viaHelper} 处（期望 0 / 2）`,
+    rendererCalls === 0 && app.includes('gameShare?.clipboard') && viaHelper === 1,
+    `navigator 调用 ${rendererCalls} 处、走 writeClipboard ${viaHelper} 处（期望 0 / 1）`,
   );
   check(
-    '两个复制按钮都有「已复制」的可见反馈（剪贴板看不见，没反馈就以为又没生效）',
-    (app.match(/copied === 'code'/g) ?? []).length > 0 &&
-      (app.match(/copied === 'invite'/g) ?? []).length > 0 &&
-      css.includes('.btn--done'),
+    '复制邀请按钮有「已复制」的可见反馈（剪贴板看不见，没反馈就以为又没生效）',
+    (app.match(/copied === 'invite'/g) ?? []).length > 0 && css.includes('.btn--done'),
   );
 
   /* ------------------------------------------------------------------ *

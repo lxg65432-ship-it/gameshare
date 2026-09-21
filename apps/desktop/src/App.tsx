@@ -759,16 +759,6 @@ export default function App() {
     await refreshSources();
   }, [pickerOpen, refreshSources]);
 
-  const copyRoomCode = useCallback(async () => {
-    if (!room) return;
-    if (await writeClipboard(room.roomCode)) {
-      session.pushLog('房间码已复制到剪贴板');
-      flashCopied('code');
-    } else {
-      session.pushLog('复制失败，请手动记录房间码');
-    }
-  }, [room, session, writeClipboard, flashCopied]);
-
   const members: PeerInfo[] = room ? [room.self, ...room.peers] : [];
   const remotePeers = useMemo(() => (room ? room.peers : []), [room]);
 
@@ -1660,13 +1650,8 @@ export default function App() {
               <>
                 <div className="roomcode">
                   <span className="roomcode__value">{room.roomCode}</span>
-                  <button
-                    type="button"
-                    className={copied === 'code' ? 'btn btn--tiny btn--done' : 'btn btn--tiny'}
-                    onClick={() => void copyRoomCode()}
-                  >
-                    {copied === 'code' ? t('room.copied') : t('room.copyCode')}
-                  </button>
+                  {/* 只留「复制邀请」一个复制入口：邀请里本来就有房间码，粘贴端自动解析，
+                      纯码复制没有邀请覆盖不了的场景（已连同一信令时只填码、口头报码看一眼即可）。 */}
                   <button
                     type="button"
                     className={
