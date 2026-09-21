@@ -1189,23 +1189,6 @@ export default function App() {
   const barCollapsed = splitActive && tiles?.barCollapsed === true;
 
   /**
-   * 浮窗那条控件是否被**钉住**（左上角那个 `.floatmenu` 就是它的开关）。
-   *
-   * 显现有两条路：鼠标进到浮窗里 CSS hover 直接显现（2026-09-21 反馈：
-   * 「没必要收起来隐藏，还得多点一次才知道有拆分」）；点这个按钮则是钉住，
-   * 调滑杆时鼠标移开也不收。纯 hover 无入口的教训仍在 —— 所以按钮常驻。
-   */
-  const [floatMenuOpen, setFloatMenuOpen] = useState(false);
-
-  /**
-   * 这个展开状态只对「浮窗且没拆分」这一种形态有意义 —— 拆分了是另一条常驻控制条，
-   * 退出浮窗了更用不上。不跟着收回去的话，下次再进浮窗会一进去就摊着一条控件。
-   */
-  useEffect(() => {
-    if (!isFloat || splitActive) setFloatMenuOpen(false);
-  }, [isFloat, splitActive]);
-
-  /**
    * 小球上的拖动 props：**按住能拖，松手没动过就算点了一下**（展开）。
    *
    * 锁住引用是为了让拖动期间拿到的一直是同一份（拖动状态在模块级，不影响正确性，
@@ -2033,40 +2016,19 @@ export default function App() {
           ref={stageRef}
           {...(isFloat ? (barCollapsed ? ballDragProps : floatDragProps) : null)}
         >
-          {/* 浮窗的控件入口：左上角**常驻**的那个小方块，点它展开 / 收起下面那条。
+          {/* 浮窗的控件条：鼠标进到浮窗里 hover 显现，移开收走（2026-09-21 定稿）。
 
-              为什么是这么个形状 —— 2026-09-18 实测只开自己一端就切了浮窗，
-              看到的是一条控件都没有的空态提示，退出去只能靠 `Ctrl+Alt+G`。
-              两个原因叠在一起：
-
-              ① 控件原先挂在 `isFloat` 那个分支里，而分支链最前面还有一层 `!inRoom`
-                 （没进房时显示「进入房间后，这里显示其他玩家的画面」）——
-                 那一层把整块接走了，控件连渲染都没有；
-              ② 就算进了房，那条 `.floatbar` 也是 `opacity: 0`、等鼠标进窗才浮出来的。
-                 「只在 hover 时才出现」等于没有 —— 同一条判据见 4.13.1 的小窗名字牌。
-
-              所以：控件挪到分支链**外面**（`!inRoom` 也拦不住），常驻的小方块当入口
-              —— 它一直看得见，点一下钉住那条。显现则不只有这一条路：
-              鼠标进到浮窗里 hover 也会浮出（2026-09-21 反馈：藏在第二次点击后面
-              多余），钉住是为了「调滑杆时鼠标移开也不收」—— 两条路互不取代。 */}
+              演化史，别倒退回去：
+              ① 原先挂在 `isFloat` 分支里，被前面的 `!inRoom` 空态整块接走，
+                 浮窗成了没有控件的空壳，退出只能靠 `Ctrl+Alt+G`（实机踩到）；
+              ② 于是控件挪到分支链外面 + 常驻小方块当入口（「只在 hover 出现
+                 等于没有」的教训，判据见 4.13.1 的小窗名字牌）；
+              ③ 常驻入口用起来「还得多点一次才知道有拆分」，改为 hover 显现
+                 + 按钮钉住；实测后发现钉住场景站不住（调滑杆时鼠标本来就在
+                 条上），按钮整个删掉 —— 现在就是纯 hover，`Ctrl+Alt+G` 兜底。 */}
           {isFloat && !splitActive && (
             <>
-              <button
-                type="button"
-                className={`floatmenu${floatMenuOpen ? ' floatmenu--open' : ''}`}
-                onClick={() => setFloatMenuOpen((open) => !open)}
-                aria-expanded={floatMenuOpen}
-                title={floatMenuOpen ? t('float.menuCollapseTitle') : t('float.menuExpandTitle')}
-              >
-                <span className="floatmenu__lines" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-                <span className="floatmenu__text">{floatMenuOpen ? t('float.menuCollapse') : t('float.menuEntry')}</span>
-              </button>
-
-              <div className={`floatbar${floatMenuOpen ? ' floatbar--pinned' : ''}`}>
+              <div className="floatbar">
                 {/* 同一个拖动把手。`frame: false` 之后标题栏没了，这块画面区就是
                     唯一的拖动区 —— 摆个把手，别让人靠猜。 */}
                 <span className="bar__grip" title={t('float.barGripTitle')} />
@@ -2109,7 +2071,7 @@ export default function App() {
 
               {/* 缩放手柄。窗口是 `setFocusable(false)` 的：原生边框的拖动与缩放都要先
                   激活窗口，在非激活窗口上一条都不成立 —— 所以自己画一个，而且要**看得见**：
-                  自绘控件没人试过就等于不存在。所以它跟 `.floatmenu` 一样**常驻半透明**，
+                  自绘控件没人试过就等于不存在。所以它**常驻半透明**，
                   不再是 hover 才露头（那只有老手才知道能缩放）。拆分模式下不给它
                   （那时主窗口被收成固定高度的控制条，改高度没有意义）。 */}
               <div className="floatgrip" title={t('float.gripTitle')} {...floatGripProps} />
@@ -2216,8 +2178,8 @@ export default function App() {
               </div>
             </>
           ) : isFloat ? (
-            /* 浮窗模式：只剩画面本身。控件**不在这里** —— 它们跟着 `.floatmenu`
-               挪到了分支链外面（见上面那段注释）。挂在分支里的时候，压在它前面的
+            /* 浮窗模式：只剩画面本身。控件**不在这里** —— 它们挂在分支链外面
+               （见上面那段注释）。挂在分支里的时候，压在它前面的
                `!inRoom` 会在「还没进房」时把整块接走，浮窗就成了一个控件都没有的空壳，
                想退出去只剩快捷键（2026-09-18 实机反馈的正是这个）。 */
             <>

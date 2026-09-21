@@ -172,10 +172,6 @@ const ZH = {
   'float.hotkeyTitle':
     '全屏游戏时按 {hotkey} 一键切换：窗口缩小、压在游戏上面、只留正在共享的画面。位置直接拖浮窗里的画面挪，大小拖右下角那个小三角；透明度在浮窗里的滑杆上调。只能压住无边框 / 窗口化全屏的游戏，独占全屏的要在游戏设置里改成无边框窗口化',
   'float.hotkeyTakenTitle': '快捷键被别的窗口占用了（同时开多个客户端时只有一个能拿到），这里点开关作用一样',
-  'float.menuCollapseTitle': '钉住控件条（鼠标移开也不收起）',
-  'float.menuExpandTitle': '钉住控件条 —— 平时鼠标移到浮窗上就会自动显现',
-  'float.menuCollapse': '收起',
-  'float.menuEntry': '控件',
   'float.barGripTitle': '按住画面任意处拖动这个浮窗',
   'float.opacity': '透明度',
   'float.opacityTitle': '调低能让后面的游戏透出来，代价是共享画面也一起变淡',
@@ -395,10 +391,6 @@ const EN: Dict = {
   'float.hotkeyTitle':
     'Press {hotkey} in a fullscreen game: the window shrinks, stays above the game, only showing shared screens. Drag the picture to move it, drag the bottom-right grip to resize, adjust opacity on the slider. Works over borderless/windowed fullscreen only — exclusive fullscreen must be changed in the game settings',
   'float.hotkeyTakenTitle': 'The hotkey is taken by another window (only one client gets it when running multiple), the toggle here still works',
-  'float.menuCollapseTitle': 'Pin the control bar (stays visible when the mouse leaves)',
-  'float.menuExpandTitle': 'Pin the control bar — it also shows up whenever the mouse is over the overlay',
-  'float.menuCollapse': 'Hide',
-  'float.menuEntry': 'Controls',
   'float.barGripTitle': 'Drag anywhere on the picture to move the overlay',
   'float.opacity': 'Opacity',
   'float.opacityTitle': 'Lower it to see the game behind — the shared picture fades too',

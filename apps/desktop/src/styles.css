@@ -1283,73 +1283,19 @@ body {
   height: 54px;
 }
 
-/* ---------------- 浮窗的控件入口（常驻） ----------------
- *
- * 浮窗是给人挂在游戏上面的，所以这块必须**小**；但它又绝不能藏起来 ——
- * 藏起来的结果就是「想退出浮窗只能记快捷键」（2026-09-18 实机反馈原话）。
- * 常驻的半透明小方块 + 一条点开才出来的控件条，是同时满足这两条的最简写法。
- */
-.floatmenu {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  z-index: 7;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  height: 22px;
-  /* 宽度定住：「控件」和「收起」两个字一样宽，点的时候按钮不会左右跳 */
-  min-width: 52px;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: rgba(12, 14, 19, 0.62);
-  color: var(--text);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  /* 常驻但不抢眼：一眼能看见它在那儿，鼠标一上去就变实 */
-  opacity: 0.55;
-  transition: opacity 0.15s ease, border-color 0.15s ease;
-}
-
-.floatmenu:hover,
-.floatmenu--open {
-  opacity: 1;
-  border-color: var(--border-strong);
-}
-
-.floatmenu--open {
-  border-color: var(--accent);
-}
-
-/* 三条横线用元素画，不用「☰」这类字符：那类字符的字体回退不可控，
-   换个系统可能变成一个方框（`.bar__grip` 那条注释同理） */
-.floatmenu__lines {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  width: 10px;
-  height: 8px;
-}
-
-.floatmenu__lines > span {
-  height: 1.5px;
-  border-radius: 1px;
-  background: currentColor;
-}
-
 /**
- * 浮窗那条控件。**由左上角的 `.floatmenu` 开关**，不再跟鼠标 hover 走。
+ * 浮窗那条控件：**鼠标进到浮窗里 hover 显现，移开收走**（2026-09-21 定稿）。
  *
- * 改成开关有两个理由，都是被反馈逼出来的：
- * ① 「只在 hover 时才出现」等于没有 —— 用户不知道有这个条，只能去记快捷键；
- * ② hover 出来的东西收不掉：点了「收起」而鼠标还在窗口里，下一秒它又浮出来，
- *    看着像按钮坏了。
+ * 演化史，别倒退：
+ * ① 纯 hover 无入口 —— 「想退出只能记快捷键」（2026-09-18 实机反馈），于是
+ *    加了常驻小方块当开关；
+ * ② 开关点开要多点一次，「拆分」藏在第二层里（2026-09-21 反馈），于是 hover
+ *    也显现 + 按钮改钉住；
+ * ③ 钉住场景站不住（调滑杆时鼠标本来就在条上），按钮整个删掉 —— 现在
+ *    就是纯 hover，`Ctrl+Alt+G` 退出兜底，`.floatgrip`（右下角）也是常驻的，
+ *    缩放不依赖 hover。
  *
- * 位置也从居中改成**贴右上角**：左上角让给那个常驻小方块，居中的话窄窗里
- * 会被 `max-width` 夹到跟方块叠在一起。
+ * 位置贴右上角：窄窗里居中会被 `max-width` 夹得没法看。
  */
 .floatbar {
   position: absolute;
@@ -1359,14 +1305,11 @@ body {
   display: flex;
   align-items: center;
   /* 窗口被拖到最窄（260px）时这一条放不下，让它折行——
-     否则末尾的「退出浮窗」会被裁在窗口外，点开却看不见，白点一下 */
+     否则末尾的「退出浮窗」会被裁在窗口外，看不见也点不着 */
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 4px 8px;
-  /* 左边界必须留在入口小方块（左上角，宽 52 + 让 4）右边 —— 窄窗里这一条
-     要是压到它上面，那个开关就点不着了，而条上没有第二个收起入口
-     （判据见 `check:tiles` 第 8 组：两者矩形不许相交） */
-  max-width: calc(100% - 72px);
+  max-width: calc(100% - 16px);
   padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -1385,12 +1328,6 @@ body {
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0);
-}
-
-/* 点开之后常驻（钉住），不跟 hover 走 */
-.floatbar--pinned {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .floatbar__label,
@@ -1456,7 +1393,7 @@ body {
   z-index: 6;
   cursor: nwse-resize;
   /* 常驻半透明，不再 hover 才露头 —— 自绘控件没人试过就等于不存在，
-     和左上角那个 `.floatmenu` 是同一条理由 */
+     和控件条纯 hover 显现前的入口按钮是同一条理由 */
   opacity: 0.35;
   transition: opacity 0.15s ease;
   background: repeating-linear-gradient(
@@ -1906,6 +1843,6 @@ body {
   opacity: 0.85;
 }
 
-/* 浮窗那条 bar 现在由 `.floatmenu` 开关，把手跟着它一起出现就够 ——
+/* 浮窗那条 bar 靠 hover 显现（.app__stage:hover），把手跟着一起出现就够 ——
    原来这里挂着一条 hover 特例（`.app--float:hover .floatbar .bar__grip`），
    那是「bar 自己靠 hover 才浮出来」时代的产物，已经跟着一起删掉了 */

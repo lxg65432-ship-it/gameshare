@@ -1563,21 +1563,10 @@ async function groupFloatMenu() {
    * **属于预期噪音**，不是这一组失败 —— 判据只看每行的 ✓ / ✗。
    */
   /**
-   * 点一个 DOM 盒子的中心。
-   *
-   * 走 `sendInputEvent`（真输入链路），不是 `el.click()` —— 后者绕过 React 与
-   * CSS 的一切，连「按钮被别的东西盖住」都验不出来。浮窗是不可聚焦窗口，
-   * 这里顺带也就验了「不可聚焦的窗里按钮点得动」。
+   * 2026-09-21 起浮窗控件条改纯 hover 显现，这组不再点击按钮 —— clickBox
+   * 的用法（真输入链路而非 `el.click()`）由其他组沿用；此处 hover 触发直接
+   * 用 `sendInputEvent({ type: 'mouseMove' })`。
    */
-  const clickBox = async (box) => {
-    const x = Math.round(box.x + box.width / 2);
-    const y = Math.round(box.y + box.height / 2);
-    win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
-    win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
-    win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
-    // 那条条的 opacity 过渡是 0.15s，等它走完再读样式
-    await sleep(300);
-  };
 
   wm.setPrimaryWindow(win);
   /**
@@ -1603,71 +1592,25 @@ async function groupFloatMenu() {
     `空态文案「${emptyText.slice(0, 20)}…」`,
   );
 
-  /* ---- A. 常驻入口：没进房、没 hover 也得看得见 ---- */
-  const menu = await readBox(win, '.floatmenu');
+  /* ---- A. 控件条在 DOM 里、没 hover 时收着（2026-09-21 起：纯 hover 显现，
+       常驻入口按钮已删 —— 显现路径只有鼠标进窗这一条，`Ctrl+Alt+G` 兜底） ---- */
+  const bar = await readBox(win, '.floatbar');
   check(
-    '没进房时左上角就有常驻的控件入口（原来这里一个控件都没有）',
-    Boolean(menu) && menu.width > 20 && menu.height > 12 && menu.opacity >= 0.3,
-    menu
-      ? `${Math.round(menu.width)}x${Math.round(menu.height)} @ ${Math.round(menu.x)},${Math.round(menu.y)}，opacity ${menu.opacity}`
-      : '没找到 .floatmenu',
+    '没进房时控件条也在（挂在分支链外面，`!inRoom` 空态拦不住它）',
+    Boolean(bar) && bar.width > 20,
+    bar ? `${Math.round(bar.width)}x${Math.round(bar.height)} @ ${Math.round(bar.x)},${Math.round(bar.y)}` : '没找到 .floatbar',
   );
-  if (!menu) {
+  if (!bar) {
     win.destroy();
     return;
   }
-
-  const barClosed = await readBox(win, '.floatbar');
   check(
-    '没点开之前那条控件是收着的（入口不是靠 hover 自动浮出的那条）',
-    Boolean(barClosed) && barClosed.opacity === 0,
-    barClosed ? `opacity ${barClosed.opacity}` : '没找到 .floatbar',
+    '鼠标没进窗时控件条是收着的（不摊在画面上挡视线）',
+    bar.opacity === 0,
+    `opacity ${bar.opacity}`,
   );
 
-  /* ---- B. 像素对照：它真的画上去了 ---- */
-  const content = win.getContentBounds();
-  const imgWith = await win.capturePage();
-  await win.webContents.executeJavaScript(
-    "document.querySelector('.floatmenu').style.display = 'none'",
-  );
-  await sleep(250);
-  const imgWithout = await win.capturePage();
-
-  const size = imgWith.getSize();
-  const scale = size.width / content.width;
-  const toBox = (x, y, w, h) => ({
-    x: Math.round(x * scale),
-    y: Math.round(y * scale),
-    w: Math.max(1, Math.round(w * scale)),
-    h: Math.max(1, Math.round(h * scale)),
-  });
-  const menuBox = toBox(menu.x + 2, menu.y + 2, menu.width - 4, menu.height - 4);
-  const otherBox = toBox(content.width - 90, content.height - 70, 80, 60);
-
-  const menuWith = meanLuma(imgWith, menuBox);
-  const menuWithout = meanLuma(imgWithout, menuBox);
-  const otherWith = meanLuma(imgWith, otherBox);
-  const otherWithout = meanLuma(imgWithout, otherBox);
-  console.log(
-    `    入口盒内平均亮度：可见 ${menuWith.toFixed(1)} → 藏起来 ${menuWithout.toFixed(1)}；` +
-      `画面别处 ${otherWith.toFixed(1)} → ${otherWithout.toFixed(1)}`,
-  );
-  check(
-    '入口真的占了像素（藏起来那块明显变暗）',
-    menuWith - menuWithout > 8,
-    `差 ${(menuWith - menuWithout).toFixed(1)}（阈值 8）`,
-  );
-  check(
-    '入口只占左上角一小块、没糊在画面上（别处两次截图基本一致）',
-    Math.abs(otherWith - otherWithout) < 3,
-    `差 ${Math.abs(otherWith - otherWithout).toFixed(1)}（阈值 3）`,
-  );
-  await win.webContents.executeJavaScript(
-    "document.querySelector('.floatmenu').style.display = ''",
-  );
-  await sleep(150);
-
-  /* ---- C. 真鼠标点一下：展开 / 收起 ---- */
+  /* ---- B. 真鼠标进窗：控件条 hover 显现 / 移出隐藏 + 像素对照 ---- */
   /*
    * 先撑回一个正常尺寸再验：进浮窗时窗口用的是**上次记住的几何**（这组跑在
    * 收起组后面，那份记录正好是 152x40 那一档，被 260x150 的下限抬上来），
@@ -1677,12 +1620,53 @@ async function groupFloatMenu() {
   await sleep(250);
   const wideContent = win.getContentBounds();
 
-  await clickBox(menu);
-  const opened = await readBox(win, '.floatbar--pinned');
+  // 鼠标移到窗口中间 —— 真实输入管线，CSS :hover 随之生效
+  await win.webContents.sendInputEvent({ type: 'mouseMove', x: 200, y: 150 });
+  await sleep(350); // 等 opacity 过渡（0.15s）走完
+  const opened = await readBox(win, '.floatbar');
   check(
-    '点一下入口就展开那条控件（真鼠标事件 → 开关）',
+    '鼠标进窗，控件条 hover 显现（拆分/退出直接可见，不用先点一次）',
     Boolean(opened) && opened.opacity === 1,
-    opened ? `opacity ${opened.opacity}` : '没出现 .floatbar--pinned',
+    opened ? `opacity ${opened.opacity}` : '没找到 .floatbar',
+  );
+
+  /* 像素对照：条真的画上去了（防「opacity 是 1 但什么都没渲染」的假阳性）。
+     bar 是 rgba(12,14,19,0.9) 的实心底，与背后画面的亮度差足够大；
+     之前想用右下角缩放手柄当对照，但它是 16x16 的半透明条纹，均值差只有 0.3。 */
+  const content = win.getContentBounds();
+  const imgOpen = await win.capturePage();
+  await win.webContents.sendInputEvent({ type: 'mouseLeave', x: -50, y: -50 });
+  await sleep(350);
+  const imgClosed = await win.capturePage();
+
+  const size = imgOpen.getSize();
+  const scale = size.width / content.width;
+  const toBox = (x, y, w, h) => ({
+    x: Math.round(x * scale),
+    y: Math.round(y * scale),
+    w: Math.max(1, Math.round(w * scale)),
+    h: Math.max(1, Math.round(h * scale)),
+  });
+  const barBox = toBox(opened.x + 4, opened.y + 4, opened.width - 8, opened.height - 8);
+  const otherBox = toBox(10, content.height - 70, 80, 60);
+
+  const barOpenLuma = meanLuma(imgOpen, barBox);
+  const barClosedLuma = meanLuma(imgClosed, barBox);
+  const otherOpen = meanLuma(imgOpen, otherBox);
+  const otherClosed = meanLuma(imgClosed, otherBox);
+  console.log(
+    `    条盒内平均亮度：显现 ${barOpenLuma.toFixed(1)} → 收走 ${barClosedLuma.toFixed(1)}；` +
+      `画面别处 ${otherOpen.toFixed(1)} → ${otherClosed.toFixed(1)}`,
+  );
+  check(
+    '条真的占了像素（显现与收走两帧，条那块明显变化）',
+    Math.abs(barOpenLuma - barClosedLuma) > 8,
+    `差 ${Math.abs(barOpenLuma - barClosedLuma).toFixed(1)}（阈值 8）`,
+  );
+  check(
+    '条只占右上角一条、没糊在画面上（别处两帧基本一致）',
+    Math.abs(otherOpen - otherClosed) < 3,
+    `差 ${Math.abs(otherOpen - otherClosed).toFixed(1)}（阈值 3）`,
   );
 
   const exitBtn = await readBox(win, '.floatbar__exit:last-of-type');
@@ -1706,26 +1690,24 @@ async function groupFloatMenu() {
     exitBtn.x + exitBtn.width <= wideContent.width + 0.5 &&
     exitBtn.y + exitBtn.height <= wideContent.height + 0.5;
   check(
-    '宽窗下展开，整条控件与「退出浮窗」都完整落在窗口里（点开却看不见按钮等于没入口）',
+    '宽窗下显现，整条控件与「退出浮窗」都完整落在窗口里（显现了却看不见按钮等于没入口）',
     insideNow,
     opened
       ? `条 ${Math.round(opened.x)},${Math.round(opened.y)} ${Math.round(opened.width)}x${Math.round(opened.height)}，窗口 ${wideContent.width}x${wideContent.height}`
-      : '没出现 .floatbar--pinned',
+      : '没找到 .floatbar',
   );
 
-  await clickBox(menu);
-  // 2026-09-21 起 hover 也显现控件条 —— 所以「收起」必须在鼠标**移出窗口**后验证，
-  // 否则鼠标停在窗口里，hover 规则会把它撑回 opacity 1（那是有意的新行为，不是 bug）。
+  // 鼠标移出窗口 → 条收走
   await win.webContents.sendInputEvent({ type: 'mouseLeave', x: -50, y: -50 });
   await sleep(350); // 等 opacity 过渡（0.15s）走完
   const closedAgain = await readBox(win, '.floatbar');
   check(
-    '再点一下收回去，且鼠标移出窗口后不再显现（开关语义 + hover 只在窗口内生效）',
+    '鼠标移出窗口后控件条收走（hover 只在窗口内生效）',
     closedAgain.opacity === 0,
     `opacity ${closedAgain.opacity}`,
   );
 
-  /* ---- D. 压到最窄（260x150）再展开：整条仍不许被挤出窗口 ---- */
+  /* ---- D. 压到最窄（260x150）再 hover：整条仍不许被挤出窗口 ---- */
   win.setBounds({ ...win.getBounds(), width: 260, height: 150 });
   await sleep(250);
   const narrow = win.getContentBounds();
@@ -1734,9 +1716,9 @@ async function groupFloatMenu() {
     narrow.width <= 300 && narrow.height <= 160,
     `实测 ${narrow.width}x${narrow.height}`,
   );
-  const narrowMenu = await readBox(win, '.floatmenu');
-  await clickBox(narrowMenu);
-  const narrowOpened = await readBox(win, '.floatbar--pinned');
+  await win.webContents.sendInputEvent({ type: 'mouseMove', x: 100, y: 70 });
+  await sleep(350);
+  const narrowOpened = await readBox(win, '.floatbar');
   const narrowExit = await readBox(win, '.floatbar__exit:last-of-type');
   /* 窄窗这一条的判据同样是**整条**：折行之后条的左边缘若被挤出窗口，
      被裁掉的正是拖动把手与透明度滑杆（末尾的按钮贴着右边，反而看不出来） */
@@ -1754,29 +1736,30 @@ async function groupFloatMenu() {
     narrowExit.x + narrowExit.width <= narrow.width + 0.5 &&
     narrowExit.y + narrowExit.height <= narrow.height + 0.5;
   check(
-    `窗口压到最窄（${narrow.width}x${narrow.height}）时展开，整条控件与「退出浮窗」都还在窗口里`,
+    `窗口压到最窄（${narrow.width}x${narrow.height}）时显现，整条控件与「退出浮窗」都还在窗口里`,
     Boolean(narrowOpened) && narrowOpened.opacity === 1 && insideNarrow,
     narrowOpened
       ? `条 ${Math.round(narrowOpened.x)},${Math.round(narrowOpened.y)} ${Math.round(narrowOpened.width)}x${Math.round(narrowOpened.height)}，窗口 ${narrow.width}x${narrow.height}`
-      : '没出现 .floatbar--pinned',
+      : '没找到 .floatbar',
   );
 
-  /* 最挤的尺寸下，展开的条**不许压到入口自己身上**：
-     条上没有第二个收起入口，入口被盖住就等于这条再也收不回去
-     （靠 `.floatbar` 的 `max-width` 把左边界留在小方块右边）。 */
-  const overlaps =
+  /* 最挤的尺寸下，显现的条**不许压住右下角的缩放手柄**：
+     手柄被盖住，缩放功能在 hover 期间就点不着（靠 `.floatbar` 的
+     `max-width` 保证条不向下延伸到底）。 */
+  const grip = await readBox(win, '.floatgrip');
+  const overlapsGrip =
     Boolean(narrowOpened) &&
-    Boolean(narrowMenu) &&
-    narrowOpened.x < narrowMenu.x + narrowMenu.width &&
-    narrowMenu.x < narrowOpened.x + narrowOpened.width &&
-    narrowOpened.y < narrowMenu.y + narrowMenu.height &&
-    narrowMenu.y < narrowOpened.y + narrowOpened.height;
+    Boolean(grip) &&
+    narrowOpened.x < grip.x + grip.width &&
+    grip.x < narrowOpened.x + narrowOpened.width &&
+    narrowOpened.y < grip.y + grip.height &&
+    grip.y < narrowOpened.y + narrowOpened.height;
   check(
-    '最窄窗口里，展开的控件条不压住那个入口（压住就再也收不回去了）',
-    Boolean(narrowOpened) && Boolean(narrowMenu) && !overlaps,
-    narrowOpened
-      ? `条 x ${Math.round(narrowOpened.x)}..${Math.round(narrowOpened.x + narrowOpened.width)} vs 入口 x ${Math.round(narrowMenu.x)}..${Math.round(narrowMenu.x + narrowMenu.width)}`
-      : '没出现 .floatbar--pinned',
+    '最窄窗口里，显现的控件条不压住右下角的缩放手柄（压住就没法缩放了）',
+    Boolean(narrowOpened) && Boolean(grip) && !overlapsGrip,
+    narrowOpened && grip
+      ? `条 y ${Math.round(narrowOpened.y)}..${Math.round(narrowOpened.y + narrowOpened.height)} vs 手柄 y ${Math.round(grip.y)}..${Math.round(grip.y + grip.height)}`
+      : '没找到 .floatbar 或 .floatgrip',
   );
 
   wm.setFloatEnabled(false);
