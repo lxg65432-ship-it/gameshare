@@ -14,7 +14,7 @@
 开一个房间，把邀请发给朋友，朋友粘贴一下就进来了。然后每人选自己的游戏窗口开始共享：
 互相看画面、开语音、听得到对方的游戏声音。2～4 人，画面走 WebRTC 直连，不经过中间服务器。
 
-当前版本 v1.1.5。后续计划（以及几件明确不做的事）见 `docs/ROADMAP.md`。
+当前版本 v1.2.0。后续计划（以及几件明确不做的事）见 `docs/ROADMAP.md`。
 
 ## 功能
 
@@ -111,7 +111,7 @@ npm run dev:desktop    # 启动客户端（Vite + Electron，改代码热更新�
 | `diagnose-capture.bat` | 「窗口明明开着但列表里没有」的诊断工具 |
 | `tunnel.bat` | 手动起异地隧道（客户端里已有开关，通常不需要） |
 
-打包产物在 `apps/desktop/release/`：`GameShare Setup 1.1.5.exe`（安装包）
+打包产物在 `apps/desktop/release/`：`GameShare Setup 1.2.0.exe`（安装包）
 或 `win-unpacked/GameShare.exe`（免安装版）。
 
 > bat 会在 `npm` 不在 PATH 时按 `GAMESHARE_NODE_DIR` 环境变量 → PATH 的顺序找

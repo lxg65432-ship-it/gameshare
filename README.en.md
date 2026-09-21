@@ -18,7 +18,7 @@ picks their game window and starts sharing: you see each other's screens, talk
 over voice chat, and hear each other's games. 2 to 4 players, video goes over
 direct WebRTC connections — no relay server in between.
 
-Current version: v1.1.5. The roadmap (including a few things that deliberately
+Current version: v1.2.0. The roadmap (including a few things that deliberately
 won't be built) lives in `docs/ROADMAP.md`.
 
 ## Features
@@ -150,7 +150,7 @@ If you'd rather not open a terminal, double-click the bat files in the repo root
 | `diagnose-capture.bat` | Diagnose "the window is running but not in the capture list" |
 | `tunnel.bat` | Manually start the remote tunnel (the client already has a switch) |
 
-Build output lands in `apps/desktop/release/`: `GameShare Setup 1.1.5.exe`
+Build output lands in `apps/desktop/release/`: `GameShare Setup 1.2.0.exe`
 (installer) or `win-unpacked/GameShare.exe` (portable).
 
 > The bat files look for node.exe via the `GAMESHARE_NODE_DIR` environment
