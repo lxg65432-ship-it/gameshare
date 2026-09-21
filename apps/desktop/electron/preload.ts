@@ -127,6 +127,18 @@ const api = {
     /** 四种音频模式在本机的可用性（含取不到的原因），给界面与验收脚本用 */
     getAudioCapabilities: (): Promise<AudioCapabilities> =>
       ipcRenderer.invoke('capture:get-audio-capabilities') as Promise<AudioCapabilities>,
+    /** 强制无边框化 / 还原（toggle）。失败也是正常返回，原因在 message 里 */
+    toggleBorderless: (sourceId: string): Promise<{ applied: boolean; message: string }> =>
+      ipcRenderer.invoke('capture:toggle-borderless', sourceId) as Promise<{
+        applied: boolean;
+        message: string;
+      }>,
+    /** 无边框化能力（FFI 是否就绪），决定界面显不显示按钮 */
+    getBorderlessStatus: (): Promise<{ available: boolean; detail: string }> =>
+      ipcRenderer.invoke('capture:borderless-status') as Promise<{
+        available: boolean;
+        detail: string;
+      }>,
   },
   server: {
     getStatus: (): Promise<EmbeddedServerStatus> =>

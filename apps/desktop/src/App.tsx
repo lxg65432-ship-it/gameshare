@@ -633,6 +633,42 @@ export default function App() {
     }
   }, [session]);
 
+  // 无边框化能力（FFI 链）：取不到能力时整个按钮不显示 —— 静态断言只看源码，
+  // 真实可见性必须由主进程说了算
+  const [borderlessAvailable, setBorderlessAvailable] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void session.capture
+      .borderlessAvailable()
+      .then((ok) => {
+        if (alive) setBorderlessAvailable(ok);
+      })
+      .catch(() => {
+        /* 取不到就当不可用，按钮不出现 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [session]);
+
+  /** 强制无边框化 / 还原。结果与失败原因都进日志面板（失败原因只有主进程知道） */
+  const toggleBorderless = useCallback(
+    async (sourceId: string) => {
+      try {
+        const r = await session.capture.toggleBorderless(sourceId);
+        session.pushLog(r.message);
+        // 主进程的 map 是唯一事实源；这里只做乐观同步，让按钮立刻换文案，
+        // 下次枚举会以列表返回的 borderless 字段为准
+        setSources((prev) =>
+          prev.map((s) => (s.id === sourceId ? { ...s, borderless: r.applied } : s)),
+        );
+      } catch (err) {
+        session.pushLog(`无边框化失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    [session],
+  );
+
   // 停止共享的入口不止一个（手动停、被共享的窗口被关掉、换源失败），
   // 与其在每个入口各清一遍 activeSourceId，不如让 sharing 变 false 时统一收口。
   useEffect(() => {
@@ -832,25 +868,50 @@ export default function App() {
           const active = sharing && source.id === activeSourceId;
           return (
             <li key={source.id} className="source">
-              <button
-                type="button"
-                className={active ? 'source__btn source__btn--active' : 'source__btn'}
-                onClick={() => void pickSource(source.id)}
-                disabled={busy}
-              >
-                {source.thumbnail ? (
-                  <img className="source__thumb" src={source.thumbnail} alt="" />
-                ) : (
-                  <span className="source__thumb source__thumb--empty" />
-                )}
-                <span className="source__name">
-                  <span className={`tag tag--${source.kind}`}>
-                    {source.kind === 'screen' ? t('source.screen') : t('source.window')}
+              <div className="source__row">
+                <button
+                  type="button"
+                  className={active ? 'source__btn source__btn--active' : 'source__btn'}
+                  onClick={() => void pickSource(source.id)}
+                  disabled={busy}
+                >
+                  {source.thumbnail ? (
+                    <img className="source__thumb" src={source.thumbnail} alt="" />
+                  ) : (
+                    <span className="source__thumb source__thumb--empty" />
+                  )}
+                  <span className="source__name">
+                    <span className={`tag tag--${source.kind}`}>
+                      {source.kind === 'screen' ? t('source.screen') : t('source.window')}
+                    </span>
+                    {source.name}
+                    {active && <span className="tag tag--live">{t('source.current')}</span>}
                   </span>
-                  {source.name}
-                  {active && <span className="tag tag--live">{t('source.current')}</span>}
-                </span>
-              </button>
+                </button>
+                {/*
+                  强制无边框化：只对窗口源提供。有些游戏不支持无边框窗口化、
+                  独占全屏又抓不到 —— 这颗按钮替用户完成他们不会设的窗口调整。
+                  toggle 语义，还原入口就是同一个按钮（主进程的 map 是唯一事实源）。
+                */}
+                {borderlessAvailable && source.kind === 'window' && (
+                  <button
+                    type="button"
+                    className={source.borderless ? 'source__bless source__bless--on' : 'source__bless'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void toggleBorderless(source.id);
+                    }}
+                    disabled={busy}
+                    title={
+                      source.borderless
+                        ? '还原这个窗口的边框和原始位置'
+                        : '去边框并铺满显示器 —— 游戏不支持无边框窗口化时用；再点一次还原'
+                    }
+                  >
+                    {source.borderless ? t('source.borderlessRestore') : t('source.borderless')}
+                  </button>
+                )}
+              </div>
             </li>
           );
         })}

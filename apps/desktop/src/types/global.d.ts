@@ -27,6 +27,13 @@ export interface CaptureSourceInfo {
    * 只认进程 ID，而 source id 里只有窗口句柄。取不到就是 null，不猜一个顶上。
    */
   pid: number | null;
+  /**
+   * 窗口源是否处于「被我们强制无边框化」的状态（屏幕源恒 false）。
+   *
+   * 唯一事实源在主进程的内存 map（它才看得到真实样式），渲染层只据此
+   * 决定按钮显示「无边框化」还是「还原」。
+   */
+  borderless: boolean;
 }
 
 /**
@@ -208,6 +215,15 @@ export interface GameShareApi {
     takeFailure(): Promise<AudioCaptureFailure | null>;
     /** 四种音频模式在本机的可用性（含取不到的原因） */
     getAudioCapabilities(): Promise<AudioCapabilities>;
+    /**
+     * 强制无边框化 / 还原（toggle）。
+     *
+     * 业务失败不抛异常：原因写在返回的 message 里（游戏自己改回样式、
+     * 句柄失效、FFI 不可用……），渲染层原样展示即可。
+     */
+    toggleBorderless(sourceId: string): Promise<{ applied: boolean; message: string }>;
+    /** 无边框化能力（FFI 是否就绪），false 时界面不显示按钮 */
+    getBorderlessStatus(): Promise<{ available: boolean; detail: string }>;
   };
   server: {
     getStatus(): Promise<EmbeddedServerStatus>;

@@ -781,6 +781,44 @@ body {
   list-style: none;
 }
 
+.source__row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.source__row .source__btn {
+  /* 行内有第二颗按钮时让它收着点，min-width 保住缩略图不变形 */
+  min-width: 0;
+  flex: 1;
+}
+
+/* 强制无边框化按钮：窄竖条贴在源行右侧，一眼可见但不抢戏。
+   应用中（--on）用强调色描边提示「再点一次是还原」。 */
+.source__bless {
+  flex: none;
+  width: 30px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #14171d;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.source__bless:hover:not(:disabled) {
+  color: var(--text);
+  border-color: #454d5e;
+}
+
+.source__bless--on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(56, 200, 245, 0.08);
+}
+
 .source__btn {
   display: flex;
   align-items: center;

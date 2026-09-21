@@ -152,6 +152,8 @@ const ZH = {
   'source.screen': '屏幕',
   'source.window': '窗口',
   'source.current': '当前',
+  'source.borderless': '无边框化',
+  'source.borderlessRestore': '还原',
   'source.minimizeHint':
     '找不到某个窗口？已最小化的窗口不会出现在这里，Windows 层面也抓不到它 —— 切回前台再点「枚举」。全屏、被别的窗口盖住都不影响捕获。',
 
@@ -376,6 +378,8 @@ const EN: Dict = {
   'source.screen': 'Screen',
   'source.window': 'Window',
   'source.current': 'current',
+  'source.borderless': 'Borderless',
+  'source.borderlessRestore': 'Restore',
   'source.minimizeHint':
     "Can't find a window? Minimized windows never appear here and Windows cannot capture them — bring it to the foreground and enumerate again. Fullscreen or covered windows capture fine.",
 

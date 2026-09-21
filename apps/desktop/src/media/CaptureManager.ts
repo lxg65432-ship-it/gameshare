@@ -26,6 +26,13 @@ export interface CaptureSourceInfo {
    * （主进程会拒绝，不会悄悄退回整机声音）。
    */
   pid: number | null;
+  /**
+   * 窗口源是否处于「被我们强制无边框化」的状态（屏幕源恒 false）。
+   *
+   * 唯一事实源在主进程的内存 map；渲染层只据此决定按钮显示「无边框化」
+   * 还是「还原」，乐观同步后以每次枚举返回值为准。
+   */
+  borderless: boolean;
 }
 
 export interface TestPatternOptions {
@@ -176,6 +183,26 @@ export class CaptureManager {
       throw new CaptureError('当前不在 Electron 环境，无法枚举采集源');
     }
     return api.listSources();
+  }
+
+  /**
+   * 强制无边框化 / 还原（toggle 语义）。
+   *
+   * 业务失败**不抛异常** —— 原因（游戏自己改回样式、FFI 不可用…）只有主进程
+   * 知道，就在返回的 message 里，渲染层把它交给日志面板即可。
+   */
+  async toggleBorderless(sourceId: string): Promise<{ applied: boolean; message: string }> {
+    const api = window.gameShare?.capture;
+    if (!api) throw new CaptureError('当前不在 Electron 环境，无法操作窗口');
+    return api.toggleBorderless(sourceId);
+  }
+
+  /** 无边框化能力（FFI 是否就绪）。取不到时按不可用处理，界面隐藏按钮 */
+  async borderlessAvailable(): Promise<boolean> {
+    const api = window.gameShare?.capture;
+    if (!api) return false;
+    const st = await api.getBorderlessStatus().catch(() => null);
+    return st?.available ?? false;
   }
 
   /* ---------------- 真实捕获 ---------------- */

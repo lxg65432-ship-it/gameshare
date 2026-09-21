@@ -27,6 +27,7 @@ import {
   type AudioTarget,
 } from './audio/types';
 import { tryPidOfWindowSource } from './audio/win32-window-pid';
+import { borderlessStatus, isBorderlessApplied, toggleBorderless } from './win32-borderless';
 
 /**
  * 渲染进程选定的采集源。
@@ -121,6 +122,14 @@ export function registerCaptureHandlers(): void {
          * 不能让整个列表跟着失败。
          */
         pid: kind === 'window' ? tryPidOfWindowSource(source.id) : null,
+        /**
+         * 这个窗口是否处于「被我们强制无边框化」的状态。
+         *
+         * 源列表拿它决定按钮显示「无边框化」还是「还原」。主进程的 map 是
+         * 唯一事实源（渲染层自己记会和真实样式漂移），查询是内存查 + 一次
+         * IsWindow，几十个源加起来仍是微秒级。
+         */
+        borderless: kind === 'window' ? isBorderlessApplied(source.id) : false,
       };
     });
   });
@@ -167,6 +176,27 @@ export function registerCaptureHandlers(): void {
 
   /** 四种音频模式在本机的可用性（含不可用的原因）。界面与验收脚本都用得上 */
   ipcMain.handle('capture:get-audio-capabilities', () => audioCapabilities());
+
+  /**
+   * 强制无边框化 / 还原（toggle 语义）。
+   *
+   * 失败不抛 IPC 异常 —— 返回结构里带 message，渲染层原样展示。
+   * 原因：这里失败全是「用户的窗口没改成」这类业务结果，不是程序错误，
+   * 走异常通道会让渲染层只能给一句笼统的「操作失败」。
+   */
+  ipcMain.handle('capture:toggle-borderless', (_event, sourceId: unknown) => {
+    if (typeof sourceId !== 'string' || sourceId.length === 0) {
+      return { applied: false, message: '缺少采集源标识' };
+    }
+    try {
+      return toggleBorderless(sourceId);
+    } catch (err) {
+      return { applied: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  /** 无边框化能力（FFI 链是否就绪），决定界面要不要显示这个按钮 */
+  ipcMain.handle('capture:borderless-status', () => borderlessStatus());
 
   session.defaultSession.setDisplayMediaRequestHandler(
     (_request, callback) => {
