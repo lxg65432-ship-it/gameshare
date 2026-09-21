@@ -46,7 +46,11 @@ async function main(): Promise<void> {
   }
   log.info(`健康检查            http://${displayHost}:${port}/health`);
   log.info(`协议版本            v${PROTOCOL_VERSION}`);
-  log.info(`房间上限            ${MAX_PEERS_PER_ROOM} 人（最多 6 条 P2P 链路）`);
+  log.info(
+    `房间上限            ${MAX_PEERS_PER_ROOM} 人（Mesh 满员时最多 ${
+      (MAX_PEERS_PER_ROOM * (MAX_PEERS_PER_ROOM - 1)) / 2
+    } 条 P2P 链路）`,
+  );
 
   // 地址清单用 console 直接输出，不走 logger——带着级别前缀和时间戳反而难读，
   // 而这段是用户唯一需要照着抄的东西。

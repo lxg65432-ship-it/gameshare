@@ -126,8 +126,11 @@ try {
     `服务器就绪：协议 v${health.protocolVersion}，房间 ${health.rooms}，成员 ${health.peers}\n`,
   );
 
-  const [A, B, C, D, E] = await Promise.all(Array.from({ length: 5 }, connectClient));
-  sockets = [A, B, C, D, E];
+  // 9 个客户端：A 建房，B~H 加入到 8 人上限，I 用于验满员拒绝
+  const NAMES = ['阿A', '阿B', '阿C', '阿D', '阿E', '阿F', '阿G', '阿H', '阿I'];
+  const clients = await Promise.all(Array.from({ length: 9 }, connectClient));
+  const [A, B, C, D, E, F, G, H, I] = clients;
+  sockets = clients;
 
   let roomCode = '';
 
@@ -211,14 +214,18 @@ try {
     assert.equal(res.data.peers.length, 2);
   });
 
-  await step('D 加入后房间达到 4 人上限', async () => {
-    const res = await emitAck(D, 'join-room', { roomCode, nickname: '阿D' });
-    assert.equal(res.ok, true);
-    assert.equal(res.data.peers.length, 3);
+  await step('D~H 依次加入，房间到达 8 人上限', async () => {
+    // D 是第 4 人（已有 3 人），H 是第 8 人（已有 7 人）
+    const rest = [D, E, F, G, H];
+    for (let i = 0; i < rest.length; i++) {
+      const res = await emitAck(rest[i], 'join-room', { roomCode, nickname: NAMES[3 + i] });
+      assert.equal(res.ok, true, `第 ${4 + i} 人加入失败：${JSON.stringify(res)}`);
+      assert.equal(res.data.peers.length, 3 + i);
+    }
   });
 
-  await step('E 加入被拒（ROOM_FULL）', async () => {
-    const res = await emitAck(E, 'join-room', { roomCode, nickname: '阿E' });
+  await step('I 加入被拒（ROOM_FULL，上限 8 人）', async () => {
+    const res = await emitAck(I, 'join-room', { roomCode, nickname: '阿I' });
     assert.equal(res.ok, false);
     assert.equal(res.error.code, 'ROOM_FULL');
   });
@@ -257,9 +264,8 @@ try {
   });
 
   await step('全体离开后空房间被回收', async () => {
-    await emitAck(B, 'leave-room', {});
-    await emitAck(C, 'leave-room', {});
-    await emitAck(D, 'leave-room', {});
+    // A（房主）之前已离开；B~H 七人逐一退出
+    for (const s of [B, C, D, E, F, G, H]) await emitAck(s, 'leave-room', {});
     await sleep(250);
     const res = await fetch(`${BASE_URL}/health`);
     const body = await res.json();

@@ -15,8 +15,11 @@ everyone can see what everyone else is playing. That's the whole idea.
 
 Open a room, send the invite, your friend pastes it and is in. Then everyone
 picks their game window and starts sharing: you see each other's screens, talk
-over voice chat, and hear each other's games. 2 to 4 players, video goes over
-direct WebRTC connections — no relay server in between.
+over voice chat, and hear each other's games. 2 to 8 players, video goes over
+direct WebRTC connections — no relay server in between. 8 is the architecture
+headroom for mesh: with N players everyone uploads N-1 streams (8 players ≈
+42 Mbps up + 7 hardware encodes per machine), so how many of you can actually
+play depends on your upload bandwidth.
 
 Current version: v1.2.0. The roadmap (including a few things that deliberately
 won't be built) lives in `docs/ROADMAP.md`.

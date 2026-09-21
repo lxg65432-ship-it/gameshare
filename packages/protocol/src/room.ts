@@ -1,7 +1,14 @@
 import type { QualityLevel } from './quality';
 
-/** 规格文档第 2 节：房间最多 4 人 */
-export const MAX_PEERS_PER_ROOM = 4;
+/**
+ * 房间人数上限。
+ *
+ * 8 是**余量**而不是实测承诺：Mesh 架构下每人要并行编码 N-1 路上行
+ * （8 人 = 7 路 ≈ 42Mbps + 7 次硬编），大多数家庭网络与显卡撑不满这个数。
+ * 实际开黑常见 3~4 人；往上留给「看彼此画面」的轻场景（狼人杀这种）。
+ * 再往上就得做 SFU —— 见 `docs/ROADMAP.md` 的明确不做清单。
+ */
+export const MAX_PEERS_PER_ROOM = 8;
 
 export const ROOM_CODE_LENGTH = 6;
 
