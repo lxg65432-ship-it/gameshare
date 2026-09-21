@@ -1375,10 +1375,19 @@ body {
   white-space: nowrap;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
+  transform: translateX(6px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
-/* 点开之后常驻，不跟 hover 走 */
+/* 鼠标进到浮窗里就显现 —— 「拆分」「退出」这些功能不该藏在第二次点击后面。
+   整块画面区都在 hover 容器里，从画面滑到条上不会中途消失。 */
+.app__stage:hover .floatbar {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+/* 点开之后常驻（钉住），不跟 hover 走 */
 .floatbar--pinned {
   opacity: 1;
   pointer-events: auto;

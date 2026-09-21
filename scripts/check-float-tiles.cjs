@@ -1714,9 +1714,13 @@ async function groupFloatMenu() {
   );
 
   await clickBox(menu);
+  // 2026-09-21 起 hover 也显现控件条 —— 所以「收起」必须在鼠标**移出窗口**后验证，
+  // 否则鼠标停在窗口里，hover 规则会把它撑回 opacity 1（那是有意的新行为，不是 bug）。
+  await win.webContents.sendInputEvent({ type: 'mouseLeave', x: -50, y: -50 });
+  await sleep(350); // 等 opacity 过渡（0.15s）走完
   const closedAgain = await readBox(win, '.floatbar');
   check(
-    '再点一下收回去（它是个开关，不是单向展开；也不因为鼠标还在窗口里又浮出来）',
+    '再点一下收回去，且鼠标移出窗口后不再显现（开关语义 + hover 只在窗口内生效）',
     closedAgain.opacity === 0,
     `opacity ${closedAgain.opacity}`,
   );
