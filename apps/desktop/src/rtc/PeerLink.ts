@@ -189,6 +189,17 @@ export class PeerLink {
   #state: LinkState = 'new';
   /** 已上报过的 ICE 错误，key = `url|code`。避免 mesh 场景下同一错误刷屏 */
   #reportedIceErrors = new Set<string>();
+  /**
+   * 本次 ICE 收集到的候选类型计数（host / srflx / prflx / relay）。
+   *
+   * 存在的唯一理由是**归因**：链路 failed 时，「有没有 srflx」是唯一能把两种
+   * 完全不同的病因分开的判据 ——
+   *   · 只有 host   ⇒ 一个 STUN 都没成，问题在 DNS 或出网被拦
+   *   · 有 srflx 仍 failed ⇒ 候选拿到了但洞打不通，只能靠 TURN 兜底（M8）
+   * 2026-09-22 之前没有任何地方记录这件事，于是「连不上」只能靠猜：
+   * 日志里只有一条 code=701，而 701 本身并不能说明 STUN 不可用。
+   */
+  #candidateTypes = new Map<string, number>();
 
   constructor(opts: PeerLinkOptions) {
     this.remotePeerId = opts.remotePeerId;
@@ -262,7 +273,16 @@ export class PeerLink {
 
     this.pc.onicecandidate = ({ candidate }) => {
       if (!candidate || this.#closed) return;
+      this.#countCandidateType(candidate.candidate);
       this.#signaling.sendIceCandidate(this.remotePeerId, candidate.toJSON());
+    };
+
+    // 收集完成时汇总一次 —— 这是「本机到底有没有拿到公网映射地址」的唯一留痕。
+    // 不走这里的话，failed 之后我们只剩一条 code=701，而它既可能伴随成功、
+    // 也可能伴随失败，读不出结论。
+    this.pc.onicegatheringstatechange = () => {
+      if (this.pc.iceGatheringState !== 'complete') return;
+      this.#log(`候选收集完成 ${this.remotePeerId}：${this.#describeCandidateTypes()}`);
     };
 
     this.pc.ontrack = (event) => {
@@ -331,6 +351,41 @@ export class PeerLink {
     };
   }
 
+  /* ---------------- 候选归因 ---------------- */
+
+  /** 从 SDP candidate 串里取 `typ` 记账（host / srflx / prflx / relay）。取不到就不记，不猜 */
+  #countCandidateType(sdp: string): void {
+    const matched = / typ (\w+)/.exec(sdp);
+    if (!matched) return;
+    const type = matched[1];
+    this.#candidateTypes.set(type, (this.#candidateTypes.get(type) ?? 0) + 1);
+  }
+
+  #describeCandidateTypes(): string {
+    if (this.#candidateTypes.size === 0) return '没有任何候选';
+    return [...this.#candidateTypes]
+      .map(([type, count]) => `${type}×${count}`)
+      .join(' ');
+  }
+
+  /**
+   * 把 ARCHITECTURE §6.1 的归因表落进日志本身。
+   *
+   * 为什么值得占一行：这两种病因的处置**完全相反**，而日志里原先只有候选计数，
+   * 得靠人去翻文档对照 —— 2026-09-22 那晚连着两轮都在这上面绕。
+   *
+   * 判据只看「有没有 srflx / relay」，**绝不看有没有报 701** ——
+   * 701 只是 DNS 解析失败，有它照样可能拿到 srflx（同一批节点实测：
+   * 一边报 701、一边给出 srflx，两者可以同时成立）。
+   */
+  #diagnoseFailure(): string {
+    const reachedPublic = this.#candidateTypes.has('srflx') || this.#candidateTypes.has('relay');
+    return reachedPublic
+      ? '已拿到公网映射却仍打不通 ⇒ 打洞失败（对称 NAT / CGNAT / 出网 UDP 被拦）；'
+        + 'STUN 侧已无优化空间，只能靠 TURN 中继（M8）'
+      : '一个 STUN 都没成 ⇒ 问题在 DNS 或出网 UDP；先按 `npm run check:stun` 的实测结果换节点';
+  }
+
   #emitState(): void {
     const raw = this.pc.connectionState;
     const next: LinkState =
@@ -352,6 +407,13 @@ export class PeerLink {
     const ice = this.pc.iceConnectionState;
     this.#onStateChange(next, `ice=${ice}`);
     this.#log(`链路状态 ${this.remotePeerId} → ${next}（ice=${ice}）`);
+
+    // failed 时补两行：候选构成 + 判读。上面那行的格式一个字都不动 —— 现有断言盯着它。
+    // 判据表见 ARCHITECTURE §6.1；「有 srflx 却仍 failed」这一支 2026-09-23 已实测确认。
+    if (next === 'failed') {
+      this.#log(`候选构成 ${this.remotePeerId}：${this.#describeCandidateTypes()}`);
+      this.#log(`· 判读 ${this.remotePeerId}：${this.#diagnoseFailure()}`);
+    }
   }
 
   /* ---------------- 发送通道 ---------------- */

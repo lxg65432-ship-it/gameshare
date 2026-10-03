@@ -1047,6 +1047,69 @@ M8 的验收方式是把 `iceTransportPolicy` 强制设为 `relay`，
 M8 之前 `buildIceServers()` 的 `turn` 参数传 `undefined`，
 链路完全依赖 STUN + host candidate。
 
+### 6.1 连不上时的归因：先看「候选构成」
+
+`code=701` 的原文是「STUN host lookup received error」= **DNS 解析失败**，
+**不能**据此判定 STUN 不可用 —— 同一节点完全可能一边报 701、一边成功给出 srflx。
+真正的判据只有一个：**有没有 srflx**。
+
+因此 `PeerLink` 会把本次收集到的候选按类型记账，输出两行日志：
+
+```
+候选收集完成 <peerId>：host×3 srflx×2
+链路状态 <peerId> → failed（ice=disconnected）
+候选构成 <peerId>：host×3 srflx×2          ← 仅 failed 时补的一行
+```
+
+读法（这是本项目唯一能把两种病因分开的地方）：
+
+| 候选构成 | 病因 | 处置 |
+| --- | --- | --- |
+| 只有 `host×N` | 一个 STUN 都没成：DNS 被污染 / 出网 UDP 被拦 | 按 `npm run check:stun` 的实测结果换节点 |
+| 有 `srflx` 却仍 `failed` | 公网映射拿到了、洞打不通（对称 NAT / CGNAT） | **STUN 怎么调都没用，只能靠 TURN**（M8） |
+
+⚠️「候选收集完成」只是 `iceGatheringState === 'complete'` 那一刻的快照 ——
+STUN 响应可能还没回来，所以它显示的 srflx 数**偏少**（实测同一台机器三个窗口，
+有的报 `host×18 srflx×3`、有的只有 `host×3`，而链路全都 connected）。
+failed 时补的那一行才更有代表性。
+
+> **实例（2026-09-23 00:09，真实异地三人局）**：
+> 信令走 Cloudflare 隧道（`trycloudflare.com`），握手正常、三条 m-line 全部交换成功、
+> 远端轨道全部收到，但两条 P2P 链路都在 13~16 秒后 `failed`：
+>
+> ```
+> 候选收集完成 …：host×6 srflx×7
+> 候选构成     …：host×6 srflx×7
+> · 判读       …：已拿到公网映射却仍打不通 ⇒ 打洞失败…
+> ```
+>
+> **`srflx` 拿到 7 条却依然打不通** ⇒ 落在第二支，**STUN 侧已无优化空间**，
+> 再换节点也不会改善。
+>
+> 顺带一个细节：`srflx` 有 7 条、而 `host` 只有 6 条，说明**不同的 STUN 目标拿到了
+> 不同的公网端口** —— 这是对称 NAT 的典型特征（锥形 NAT 对所有目标复用同一个映射，
+> 只会给出极少的 srflx）。而本机本身就是**双层 NAT**（见 `apps/desktop/package.json`
+> 里 cloudflared 的注释：公网 IPv6 实测不通，隧道是异地访问的唯一实现），
+> 打洞成功率本就极低。
+>
+> ⇒ 这类环境**只有 TURN 能解** —— 这正是 M8 存在的理由，也是「最终须 TURN」那条结论的
+> 第一个真实证据。在 M8 落地前，异地只能靠虚拟局域网（Tailscale / ZeroTier 之类）顶。
+
+### 6.2 VPN 会把两件事同时搞错（2026-09-22）
+
+这条踩过、且结论很反直觉，所以单列：
+
+1. **污染 STUN 可用性的判断。** 2026-09-16 那次实测记下「Google 节点可用，
+   与『国内一定不可达』的成见不符」，2026-09-22 复查发现**当时机器开着 VPN**。
+   挂 VPN 当然能解析 Google；而 VPN 的 DNS 劫持与全局路由又会让**国内节点**
+   误报失败 —— 于是测出「国内全挂、只有 Google 通」，与真实用户环境**正好相反**。
+   ⇒ `stun.l.google.com` 已于 2026-09-22 从默认列表移除（对国内用户必然失效，
+   只会拖慢 ICE 收集：每个失败目标都要等一轮超时）。
+   **跑 `check:stun` 之前必须关 VPN**，否则等于没测。
+2. **污染 srflx 的内容。** 开 VPN 时 STUN 探到的公网映射是 **VPN 出口地址**，
+   而不是本机真实的 NAT 映射。对端往那个地址打洞要么不通，要么被迫绕 VPN 中转、
+   延迟抬高。⇒ 联调 P2P 前先关 VPN。Parsec 官方文档给的也是同一条建议。
+
 ---
 
 ## 7. V0.1 明确不做

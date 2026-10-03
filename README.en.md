@@ -201,6 +201,50 @@ Whether a real game window carries its real sound can only be checked by ear.
 | Machine-specific build pitfalls | `docs/BUILD-NOTES.md` |
 | Contributing | `CONTRIBUTING.md` |
 
+## Which networks can't connect
+
+This app **relays nothing** — the two ends must punch a direct hole through NAT.
+That is inherent to a peer-to-peer design. On the networks below, hole punching is
+physically impossible. It is not a bug: changing STUN servers, restarting, or
+reinstalling will not help.
+
+| Network | Why it can't work |
+| --- | --- |
+| **Campus / university networks** | Thousands of users share very few public IPs (CGNAT), and the gateway allocates ports per destination (symmetric NAT) |
+| **Corporate / office networks** | Same as above, plus non-standard UDP ports are often blocked outright |
+| **Mobile data (4G / 5G)** | Carriers run CGNAT too |
+| **Home broadband behind carrier-grade NAT** | You never get a real public mapping. Check: if your router's WAN IP differs from the public IP a site like `ip138` reports, you're behind CGNAT |
+
+**One end on such a network is usually fine** (the other end only needs to be
+punchable). It fails for certain only when **both** ends are behind one — the
+classic case being two students on campus networks.
+
+### How to tell this is the cause
+
+If you **can see the other members but the video never arrives**, open the log
+panel and look for these two lines (the client's own log output is in Chinese):
+
+```
+候选收集完成 xxx：host×6 srflx×7
+· 判读 xxx：已拿到公网映射却仍打不通 ⇒ 打洞失败（对称 NAT / CGNAT / 出网 UDP 被拦）
+```
+
+- Both lines present ⇒ this is the case, and **switching STUN nodes, restarting,
+  or reinstalling will not help**;
+- Only `host×N` with no `srflx` ⇒ something else (DNS, or outbound UDP blocked) —
+  try a different network.
+
+### Three ways out
+
+1. **Use a different network** (campus → home broadband). Fastest, but a phone
+   hotspot often fails too (also CGNAT);
+2. **A virtual LAN** (Tailscale / ZeroTier and similar): both sides install it and
+   join the same virtual network, then connect as if on the same LAN.
+   **Both sides must install it**;
+3. **A TURN relay**: forwarding through a public server — the only option that
+   works across such networks with **nothing for the other side to install**.
+   **Not implemented yet** (that is M8).
+
 ## Known limitations
 
 1. Exclusive fullscreen can't be captured (Windows limitation) — use borderless
@@ -208,7 +252,9 @@ Whether a real game window carries its real sound can only be checked by ear.
    source list converts the window (click again to restore). It only calls
    Win32 window APIs and never touches the game process, but a few games
    re-apply their own window style and defeat it;
-2. Symmetric NAT can't connect and there's no TURN fallback (that's M8);
+2. Some networks can't connect directly (campus / corporate / mobile data /
+   carrier-grade NAT) and there's no TURN fallback yet (that's M8) — see
+   "Which networks can't connect" above;
 3. No authentication — see the security section;
 4. Kernel-level anti-cheat systems (EAC / BattlEye / Vanguard) may treat screen
    capture specially. Use at your own risk; try a game without anti-cheat first;
