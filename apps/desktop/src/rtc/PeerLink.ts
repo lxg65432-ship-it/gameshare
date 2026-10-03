@@ -188,7 +188,6 @@ const ICE_RESTART_MAX_ATTEMPTS = ICE_RESTART_BACKOFF_MS.length;
  * 完整候选收集，抢在自愈前面反而拖慢恢复。
  */
 const DISCONNECTED_GRACE_MS = 4_000;
-
 /**
  * connected 后要稳定这么久，才把重试配额还回去。
  *
@@ -207,6 +206,38 @@ const ICE_RESTART_RESET_MS = 10_000;
  * 于是这条僵尸还会静默活到房间解散）。
  */
 const ICE_RESTART_ANSWER_TIMEOUT_MS = 15_000;
+
+/**
+ * 链路在非终态（非 connected / 非 failed）停留多久就打中间日志。
+ *
+ * **为什么需要**：§6.1 的归因两行只在 `failed` 时才打，而 ICE 从
+ * `checking` 走到 `failed` 要 15~30 秒。用户（和自己）在等待期里只能看到
+ * 一个「连接中」，日志里也只有一条 `iceConnectionState` ——
+ * **没有任何信息能区分「正在慢慢连」与「已经卡死了」。
+ *
+ * 2026-09-24 那次排障就踩了这个：日志截早了，判读没出来，
+ * 白等了一轮才重新复现。中间日志把这个窗口补上。
+ */
+const STUCK_CHECKING_THRESHOLD_MS = 20_000;
+
+/** 归因结论的可读摘要。这是**要上界面**的那一份，不是日志。 */
+export interface LinkDiagnosis {
+  /** 病因归类，供界面选图标/配色 */
+  kind: 'ok' | 'connecting' | 'punching' | 'needs-turn' | 'needs-stun' | 'exhausted';
+  /** 一句话结论，直接可显示 */
+  summary: string;
+  /** 补充说明（重试次数、退避状态等）。没有就为空串 */
+  detail: string;
+  /**
+   * 本轮收集到的候选构成，形如 `host×2 srflx×1`。
+   *
+   * 单独一个字段而不是塞进 detail：候选构成是**判据本身**
+   *（有没有 srflx/relay 决定归到 needs-turn 还是 needs-stun），
+   * 不是补充说明。混进 detail 会让日志把它打两遍，也让界面
+   * 分不清哪句是结论哪句是证据。
+   */
+  candidates: string;
+}
 
 export class PeerLink {
   readonly remotePeerId: string;
@@ -257,6 +288,8 @@ export class PeerLink {
   #iceRestartResetTimer: ReturnType<typeof setTimeout> | null = null;
   /** 等 answer 的兜底定时器。与上面两个都分开，三者可能同时存在 */
   #iceRestartAnswerTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 卡住中间日志的定时器。链路进入 connecting/checking 时排，终态时清 */
+  #stuckTimer: ReturnType<typeof setTimeout> | null = null;
   /** 保证「挂轨道 → 生成 offer」不会抢跑，否则会协商出单向 m-line */
   #pendingTrackApply: Promise<void> = Promise.resolve();
   #closed = false;
@@ -653,6 +686,38 @@ export class PeerLink {
     }, ICE_RESTART_RESET_MS);
   }
 
+  /**
+   * 卡在非终态时打一条中间日志（见 `STUCK_CHECKING_THRESHOLD_MS` 的理由）。
+   *
+   * 排一次，不重复排：状态从 connecting → checking 变化时会再触发 `#emitState`，
+   * 但那两次早退在 `next === this.#state` 上（connecting 与 checking 都映射成
+   * `connecting`），所以每个非终态阶段只会排一次。
+   */
+  #scheduleStuckNotice(): void {
+    if (this.#closed) return;
+    if (this.#stuckTimer !== null) return;
+    this.#stuckTimer = setTimeout(() => {
+      this.#stuckTimer = null;
+      if (this.#closed) return;
+      const state = this.#state;
+      // 醒来时已经不是非终态了 ⇒ 白等一场，什么都不打
+      if (state !== 'new' && state !== 'connecting') return;
+      const { summary, detail, candidates } = this.#readDiagnosis();
+      this.#log(
+        `仍在 ${state === 'new' ? 'new' : 'connecting'} 已超 ` +
+          `${Math.round(STUCK_CHECKING_THRESHOLD_MS / 1000)}s（ice=${this.pc.iceConnectionState}）：` +
+          `${candidates}${detail ? ` · ${detail}` : ''} —— ${summary}`,
+      );
+    }, STUCK_CHECKING_THRESHOLD_MS);
+  }
+
+  #clearStuckNotice(): void {
+    if (this.#stuckTimer !== null) {
+      clearTimeout(this.#stuckTimer);
+      this.#stuckTimer = null;
+    }
+  }
+
   #emitState(): void {
     const raw = this.pc.connectionState;
     const next: LinkState =
@@ -671,6 +736,11 @@ export class PeerLink {
     if (next === this.#state) return;
     this.#state = next;
 
+    // 非终态排中间日志，终态与 closed 清掉 —— 否则一条已连上的链路
+    // 几十秒后还会莫名冒出一句「仍在连接中」。
+    if (next === 'new' || next === 'connecting') this.#scheduleStuckNotice();
+    else this.#clearStuckNotice();
+
     const ice = this.pc.iceConnectionState;
     this.#onStateChange(next, `ice=${ice}`);
     this.#log(`链路状态 ${this.remotePeerId} → ${next}（ice=${ice}）`);
@@ -688,6 +758,102 @@ export class PeerLink {
           : '（尚未重试）';
       this.#log(`· 判读 ${this.remotePeerId}：${this.#diagnoseFailure()}${attempt}`);
     }
+  }
+
+  /* ---------------- 归因摘要（给界面用） ---------------- */
+
+  /**
+   * 把归因结论整理成**可上界面**的一份。
+   *
+   * 为什么不让界面直接读日志 / 直接调 `getDiagnostics()` 拼：
+   * 那两处的原始形态都不是给人看的 —— 日志是给排障时的自己看的，
+   * `getDiagnostics()` 有二十多个字段、给的是内部命名。
+   * 界面要的是「一句话 + 一个归类」，多一份翻译层就能让 UI 与
+   * 归因逻辑解耦：改判据时只动这一个方法，不用同步改界面。
+   *
+   * 归类对应五种用户能理解的状态：
+   * | kind | 含义 | 界面该显示什么 |
+   * | --- | --- | --- |
+   * | ok | 已连上 | 不显示（牌子本身就写着「已连接」） |
+   * | connecting | 还在连 | 「正在连接…」 |
+   * | punching | 有 srflx，洞还没通 | 「正在打洞，可能较慢」 |
+   * | needs-stun | 一个 STUN 都没成 | 「本机网络受限，检查代理/VPN」 |
+   * | needs-turn | 有 srflx 仍不通 | 「两边网络互不相通，需要中继」 |
+   * | exhausted | 重试到顶 | 「多次重试失败，只能走中继」 |
+   */
+  get diagnosis(): LinkDiagnosis {
+    const { summary, detail, candidates } = this.#readDiagnosis();
+    return { kind: this.#diagnosisKind(), summary, detail, candidates };
+  }
+
+  /** 归类。与 `#readDiagnosis` 的分支严格一一对应 —— 别让两者说法不一致 */
+  #diagnosisKind(): LinkDiagnosis['kind'] {
+    const state = this.#state;
+    const hasPublic = this.#candidateTypes.has('srflx') || this.#candidateTypes.has('relay');
+
+    if (state === 'connected') return 'ok';
+    if (state === 'failed') {
+      if (this.#iceRestartAttempts >= ICE_RESTART_MAX_ATTEMPTS) return 'exhausted';
+      return hasPublic ? 'needs-turn' : 'needs-stun';
+    }
+    if (state === 'disconnected') return (this.#iceRestartTimer !== null) ? 'punching' : 'connecting';
+    // new / connecting：有 srflx 且收集已完成 ⇒ 洞还在打；否则就是还在收集
+    if (hasPublic && this.pc.iceGatheringState === 'complete') return 'punching';
+    return 'connecting';
+  }
+
+  #readDiagnosis(): { summary: string; detail: string; candidates: string } {
+    const candidates = this.#describeCandidateTypes();
+    const hasPublic = this.#candidateTypes.has('srflx') || this.#candidateTypes.has('relay');
+    const state = this.#state;
+
+    // 自愈进行中的补充信息。这段是界面上唯一能看出「它在努力自救」的地方 ——
+    // 否则用户只看到「已断开」，不知道程序正在第几次尝试。
+    let detail = '';
+    if (this.#iceRestartTimer !== null) {
+      detail = '正在退避等待，稍后重试';
+    } else if (this.#iceRestartPending) {
+      detail =
+        this.#iceRestartAnswerTimer !== null
+          ? `正在重试（第 ${this.#iceRestartAttempts}/${ICE_RESTART_MAX_ATTEMPTS} 次），等对方回应`
+          : `正在重试（第 ${this.#iceRestartAttempts}/${ICE_RESTART_MAX_ATTEMPTS} 次）`;
+    } else if (this.#iceRestartAttempts > 0) {
+      detail = `已重试 ${this.#iceRestartAttempts} 次`;
+    }
+
+    if (state === 'connected') return { summary: '已连接', detail: '', candidates };
+
+    if (state === 'failed') {
+      const exhausted = this.#iceRestartAttempts >= ICE_RESTART_MAX_ATTEMPTS;
+      return {
+        summary: exhausted
+          ? '多次重试仍不通：两边网络互不相通，需要中继'
+          : hasPublic
+            ? '两边网络互不相通，需要中继（正在自动重试）'
+            : '本机没能连上任何 STUN 服务器，检查代理或防火墙设置',
+        detail: detail || (exhausted ? '已放弃重试' : ''),
+        candidates,
+      };
+    }
+
+    // 非终态
+    if (state === 'disconnected') {
+      return {
+        summary: detail || '连接已断开，正在尝试恢复',
+        detail,
+        candidates,
+      };
+    }
+
+    // new / connecting：候选收集还没走完是常态，只有「有候选了还在转」才值得提示
+    if (hasPublic && this.pc.iceGatheringState === 'complete') {
+      return {
+        summary: '已拿到公网地址，正在打通连接（打洞可能要十几秒）',
+        detail,
+        candidates,
+      };
+    }
+    return { summary: '正在连接…', detail: '', candidates };
   }
 
   /* ---------------- 发送通道 ---------------- */
@@ -1194,6 +1360,7 @@ export class PeerLink {
       clearTimeout(this.#iceRestartAnswerTimer);
       this.#iceRestartAnswerTimer = null;
     }
+    this.#clearStuckNotice();
 
     this.pc.onnegotiationneeded = null;
     this.pc.onicecandidate = null;

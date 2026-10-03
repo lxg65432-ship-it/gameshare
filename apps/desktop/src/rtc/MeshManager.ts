@@ -3,7 +3,7 @@ import type { QualityLevel } from '@game-share/protocol';
 import type { IceServerConfig } from '@game-share/shared';
 
 import type { SignalingEvents } from '../signaling/SignalingClient';
-import { PeerLink, type LinkDiagnostics } from './PeerLink';
+import { PeerLink, type LinkDiagnostics, type LinkDiagnosis } from './PeerLink';
 import {
   emptyLocalTracks,
   type LinkState,
@@ -272,6 +272,18 @@ export class MeshManager {
   getDiagnostics(): Record<string, LinkDiagnostics> {
     const out: Record<string, LinkDiagnostics> = {};
     for (const [peerId, link] of this.#links) out[peerId] = link.getDiagnostics();
+    return out;
+  }
+
+  /**
+   * 每条链路的归因摘要，供界面上显示「为什么连不上」。
+   *
+   * 走独立的 getter 而不是塞进 `getDiagnostics()`：后者的定位是排障快照
+   * （二十多个内部字段、给日志/调试面板看的），界面要的是一句话 + 一个归类。
+   */
+  getDiagnoses(): Record<string, LinkDiagnosis> {
+    const out: Record<string, LinkDiagnosis> = {};
+    for (const [peerId, link] of this.#links) out[peerId] = link.diagnosis;
     return out;
   }
 

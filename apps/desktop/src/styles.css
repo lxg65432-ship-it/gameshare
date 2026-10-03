@@ -768,6 +768,85 @@ body {
   color: var(--err);
 }
 
+/* ---------------- 链路归因条 ----------------
+ *
+ * 为什么需要它：1.3.2 起日志里就有「已拿到公网映射却仍打不通 ⇒ 只能 TURN」
+ * 这种可行动结论，但日志面板默认收起 —— 于是结论一直只在需要排障时才看得见，
+ * 而「为什么别人是黑屏」恰恰是普通用户也会问的问题。
+ *
+ * 位置刻意选在 header 之下的浮层：它比标签显眼，又不遮挡 header 上的操作按钮。
+ */
+
+.tile__diag {
+  position: absolute;
+  top: 26px;
+  left: 7px;
+  right: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  /* 半透明深色：底下是画面，不透明会把它挡掉 */
+  background: rgba(8, 11, 16, 0.82);
+  font-size: 12px;
+  line-height: 1.45;
+  /* 默认 pointer-events 关掉：这条是纯说明，不该挡住下面的点击 */
+  pointer-events: none;
+}
+
+.tile__diagtext {
+  font-weight: 500;
+}
+
+.tile__diagdetail {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* 候选构成：等宽字体，让「host×2 srflx×1」里的计数一眼可数 */
+.tile__diagcand {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+/*
+ * 四种归因分四色。刻意**不用红色**给「正在打洞」——
+ * 那是在正常推进的事，标成错误会让人以为坏了。红色留给真的无解那两种。
+ */
+.tile__diag--punching {
+  color: var(--warn);
+}
+
+.tile__diag--needs-stun,
+.tile__diag--needs-turn,
+.tile__diag--exhausted {
+  color: var(--err);
+}
+
+/* 缩略格上的两格提示 */
+.tile__diagdot {
+  margin-left: auto;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  cursor: help;
+}
+
+.tile__diagdot--punching {
+  background: rgba(232, 177, 58, 0.18);
+  color: var(--warn);
+}
+
+.tile__diagdot--needs-stun,
+.tile__diagdot--needs-turn,
+.tile__diagdot--exhausted {
+  background: rgba(229, 100, 92, 0.18);
+  color: var(--err);
+}
+
 /* ---------------- 采集源列表 ---------------- */
 
 .sources {

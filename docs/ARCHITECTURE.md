@@ -1148,9 +1148,45 @@ Chromium 默认的 `iceRestartPolicy` 是 `'gathering'`，只在**首次**收候
 排障时看这三个就能判断卡在哪：`pending=true` 且 `answerPending=true` = 在等对端回 offer；
 `scheduled=true` = 在退避里等；`attempts=4` = 已经到顶，只能 TURN。
 
-验收：`npm run check:ice-restart`（54 项）。
+验收：`npm run check:ice-restart`（72 项）。
 它把 `RTCPeerConnection` 换成可控假件来驱动状态机 —— 真链路（`smoke:p2p` 走回环）
 全程 `connected`，永远走不到这条路径。
+
+### 6.4 归因上界面
+
+§6.1 的归因表原本只活在日志里。问题是**用户不看日志** —— 他看到的是一块黑屏
+加一句「连接中」，而「正在慢慢连」与「已经卡死了」在界面上长得一模一样。
+2026-09-24 那次排障就卡在这儿：日志截早了，判读没出来。
+
+`LinkDiagnosis`（`PeerLink.diagnosis`）是把归因翻译成**能直接显示**的一份：
+一句话结论 + 一个归类 + 补充说明 + 候选构成。界面只认这份，不读日志、
+不自己拼 `getDiagnostics()`（后者有二十多个内部命名字段，不是给人看的）。
+**改判据只动 `PeerLink` 一个方法，UI 不用跟着改。**
+
+| kind | 含义 | 界面 |
+| --- | --- | --- |
+| `ok` | 已连上 | 不显示（牌子已写着「已连接」） |
+| `connecting` | 还在连 | 不显示（正常状态，不必解释） |
+| `punching` | 有 srflx，洞还没通 | 黄字「正在打洞，可能较慢」 |
+| `needs-stun` | 一个 STUN 都没成 | 红字「检查代理/VPN」 |
+| `needs-turn` | 有 srflx 仍不通 | 红字「需要中继」 |
+| `exhausted` | 重试到顶 | 红字「只能走中继」 |
+
+「正在打洞」刻意**不用红色** —— 那是在正常推进的事，标成错误会让人以为坏了。
+
+**为什么轮询而不是靠状态变化回调**：自愈的重试进度会在**状态不变**的情况下推进。
+`disconnected` 连着来几次每次都进回调，但退避档位、重试次数都在变；
+更极端的是 `punching → punching` 之间界面完全看不出区别。
+所以 `ShareSession` 每 1s 拉一次 `getDiagnoses()`。
+
+**候选构成（`candidates`）单独一个字段，不塞进 `detail`**：它是**判据本身**
+（有没有 srflx/relay 决定归到 `needs-turn` 还是 `needs-stun`），不是补充说明。
+混进 `detail` 会让中间日志把它打两遍（`host×1 srflx×1 · host×1 srflx×1`），
+也让界面分不清哪句是结论哪句是证据。`check:ice-restart` 用例 14 有两条断言钉住这点。
+
+另有一条**中间日志**：`connecting` 超过 20s 就先打一行（候选构成 + ice 状态 + 结论），
+不必干等 `failed`。进 `connected` 后定时器必须清掉 —— 否则一条已连上的链路
+几十秒后还会莫名冒出一句「仍在连接中」。
 
 ⚠️ **这不能替代 TURN**。它救的是「本来能通只是断了」，对「两端都在对称 NAT」
 无能为力 —— 那类环境重试到顶仍会失败，日志会明说「判定为真不通 ⇒ 只能 TURN」。

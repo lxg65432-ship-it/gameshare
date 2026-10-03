@@ -812,6 +812,184 @@ async function main() {
     link.close();
   }
 
+  /* --- 用例 11：归因摘要（要上界面的那一份） --- */
+  section('用例 11：归因摘要');
+  {
+    const { link, pc } = makeLink(PeerLink, { selfPeerId: 'zzz-initiator' });
+
+    // 刚建链路：一句话「正在连接」，不该有任何归因结论
+    check(
+      '新建链路的归因是 connecting',
+      link.diagnosis.kind === 'connecting',
+      `实际 ${link.diagnosis.kind}`,
+    );
+    check(
+      'connecting 的 summary 是「正在连接…」而不是任何报错',
+      link.diagnosis.summary === '正在连接…',
+      `实际「${link.diagnosis.summary}」`,
+    );
+
+    // connected：kind=ok，界面据此**不显示**归因条
+    pc.gather(['host', 'srflx']);
+    pc.drive('connected');
+    check(
+      'connected 的归因是 ok（界面不显示归因条）',
+      link.diagnosis.kind === 'ok',
+      `实际 ${link.diagnosis.kind}`,
+    );
+
+    // 「有 srflx 且收集完成但仍连不上」= 正在打洞，不是坏了
+    pc.drive('connecting');
+    pc.gather(['host', 'srflx']);
+    check(
+      '有 srflx + 收集完成 + 仍在 connecting ⇒ punching（不是 needs-turn）',
+      link.diagnosis.kind === 'punching',
+      `实际 ${link.diagnosis.kind} —— 打洞中不该报「需要中继」，那是误报`,
+    );
+
+    link.close();
+  }
+
+  /* --- 用例 12：failed 归因分「有 srflx / 无 srflx」两支 --- */
+  section('用例 12：failed 归因分两支');
+  {
+    // 支一：有 srflx 仍 failed ⇒ 打洞失败 ⇒ 需要 TURN
+    const a = makeLink(PeerLink, { selfPeerId: 'zzz-initiator' });
+    a.pc.gather(['host', 'srflx']);
+    a.pc.drive('connecting');
+    a.pc.drive('failed');
+    await sleep(30);
+    check(
+      '有 srflx 仍 failed ⇒ kind=needs-turn',
+      a.link.diagnosis.kind === 'needs-turn',
+      `实际 ${a.link.diagnosis.kind}`,
+    );
+    check(
+      'needs-turn 的 summary 明确说「需要中继」（可行动，不是「已断开」）',
+      a.link.diagnosis.summary.includes('中继'),
+      `实际「${a.link.diagnosis.summary}」`,
+    );
+    a.link.close();
+
+    // 支二：一个 STUN 都没成 ⇒ 本机网络问题 ⇒ 换节点，别甩给 TURN
+    const b = makeLink(PeerLink, { selfPeerId: 'zzz-initiator' });
+    b.pc.gather(['host']);
+    b.pc.drive('connecting');
+    b.pc.drive('failed');
+    await sleep(30);
+    check(
+      '只有 host 仍 failed ⇒ kind=needs-stun',
+      b.link.diagnosis.kind === 'needs-stun',
+      `实际 ${b.link.diagnosis.kind}`,
+    );
+    check(
+      'needs-stun 的 summary 指向本机设置（代理/防火墙），不是「中继」',
+      b.link.diagnosis.summary.includes('STUN') && !b.link.diagnosis.summary.includes('中继'),
+      `实际「${b.link.diagnosis.summary}」`,
+    );
+    b.link.close();
+  }
+
+  /* --- 用例 13：重试到顶后归因升级为 exhausted --- */
+  section('用例 13：到顶后归因升级');
+  {
+    const { link, pc } = makeLink(PeerLink, { selfPeerId: 'zzz-initiator' });
+    pc.gather(['host', 'srflx']);
+
+    // 先跑到上限（退避被时间缩放压到 0/200/500/1200ms）
+    for (let i = 0; i < 4; i += 1) {
+      pc.drive('connecting');
+      pc.drive('failed');
+      await sleep(1_500);
+      await link.handleAnswer('v=0\r\n');
+    }
+    check('前置：重试已到上限 4', link.getDiagnostics().iceRestartAttempts === 4, `实际 ${link.getDiagnostics().iceRestartAttempts}`);
+
+    pc.drive('connecting');
+    pc.drive('failed');
+    await sleep(30);
+    check(
+      '到顶后 kind=exhausted（不再是 needs-turn）',
+      link.diagnosis.kind === 'exhausted',
+      `实际 ${link.diagnosis.kind}`,
+    );
+    check(
+      'exhausted 明说「多次重试仍不通」而不是让用户以为还在重试',
+      link.diagnosis.summary.includes('多次重试'),
+      `实际「${link.diagnosis.summary}」`,
+    );
+    check(
+      'exhausted 仍给出出路（中继），不是死路一条',
+      link.diagnosis.summary.includes('中继'),
+      `实际「${link.diagnosis.summary}」`,
+    );
+    link.close();
+  }
+
+  /* --- 用例 14：卡在 connecting 超过阈值时打中间日志 --- */
+  section('用例 14：卡住中间日志');
+  {
+    const { link, pc, logs } = makeLink(PeerLink, { selfPeerId: 'zzz-initiator' });
+
+    // 必须先造候选：判据只看 srflx/relay，候选表为空时日志只能如实报「没有任何候选」，
+    // 那测的就不是「日志带上了候选构成」而是「候选表空时日志长什么样」——两码事
+    pc.gather(['host', 'srflx']);
+    pc.drive('connecting');
+    // 阈值 20s > 1000 会被缩放到 400ms，等 700ms 足够
+    await sleep(700);
+    const stuckLines = logs.filter((l) => l.includes('仍在'));
+    check(
+      'connecting 超阈值时打出中间日志（不必等 failed）',
+      stuckLines.length === 1,
+      `实际 ${stuckLines.length} 条：${stuckLines.join(' | ') || '(无)'}`,
+    );
+    check(
+      '中间日志带上候选构成（判据只看 srflx/relay，没候选就无从判断）',
+      stuckLines.some((l) => /host×\d+/.test(l)),
+      stuckLines.join(' | ') || '(无)',
+    );
+    // 候选构成是判据本身（有没有 srflx/relay 决定归到 needs-turn 还是 needs-stun），
+    // 所以它有自己的字段、只打一遍。混进 detail 会打两遍 ——
+    // 那正是它当初被拆出来的原因，所以这条断言得钉住。
+    check(
+      '候选构成在中间日志里只出现一次（有自己的字段，不混进 detail）',
+      (stuckLines[0]?.match(/host×/g) ?? []).length === 1,
+      stuckLines.join(' | ') || '(无)',
+    );
+    check(
+      '中间日志带上 ice 状态（区分「还在收集」与「收集完了还连不上」）',
+      stuckLines.some((l) => l.includes('ice=')),
+      stuckLines.join(' | ') || '(无)',
+    );
+
+    // 连上之后不该再冒「仍在连接中」—— 定时器必须被清掉
+    pc.gather(['host', 'srflx']);
+    pc.drive('connected');
+    logs.length = 0;
+    await sleep(700);
+    check(
+      'connected 之后不再冒出「仍在连接中」',
+      logs.filter((l) => l.includes('仍在')).length === 0,
+      logs.filter((l) => l.includes('仍在')).join(' | ') || '(空)',
+    );
+    link.close();
+  }
+
+  /* --- 用例 15：close() 后不再有中间日志 --- */
+  section('用例 15：close() 清中间日志定时器');
+  {
+    const { link, pc, logs } = makeLink(PeerLink, { selfPeerId: 'zzz-initiator' });
+    pc.drive('connecting');
+    link.close();
+    logs.length = 0;
+    await sleep(700);
+    check(
+      'close() 后卡住定时器不再醒来写日志',
+      logs.length === 0,
+      logs.join(' | ') || '(空)',
+    );
+  }
+
   /* ---------------------------------------------------------------- *
    * 汇总
    * ---------------------------------------------------------------- */

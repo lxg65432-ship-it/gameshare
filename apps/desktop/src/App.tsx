@@ -12,6 +12,7 @@ import type {
   TunnelStatus,
 } from './types/global';
 import type { LinkStats, RemoteTracks } from './rtc/types';
+import type { LinkDiagnosis } from './rtc/PeerLink';
 import { floatBallProps, floatDragProps, floatGripProps } from './float-drag';
 import { ShareSession } from './session/ShareSession';
 import type { ConnectionState } from './signaling/SignalingClient';
@@ -65,6 +66,24 @@ const FOCUS_QUALITY: QualityLevel = 'FOCUS';
 const BACKGROUND_QUALITY: QualityLevel = 'THUMBNAIL';
 
 type TileVariant = 'grid' | 'main' | 'thumb';
+
+/**
+ * 缩略格上的诊断短标签。
+ *
+ * 只有两格宽，最多两个字 —— 完整结论走 `title` 悬停。
+ * 别在这里塞说明文字：168x95 的格子里那只会挤成一坨。
+ */
+const DIAG_SHORT: Partial<Record<LinkDiagnosis['kind'], string>> = {
+  punching: '…',
+  'needs-turn': '阻',
+  'needs-stun': '障',
+  exhausted: '阻',
+};
+
+/** 悬停提示：结论 + 补充 + 候选构成（有任何一段就带上，不留空壳） */
+function DIAG_TITLE(d: LinkDiagnosis): string {
+  return [d.summary, d.detail, d.candidates].filter(Boolean).join(' · ');
+}
 
 /**
  * 每个远端用户的**分轨**音量偏好：语音与应用（共享）声音各自独立。
@@ -947,6 +966,7 @@ export default function App() {
       onVideoEl={videoElRef(peer.peerId)}
       linkState={links[peer.peerId]?.state ?? 'new'}
       detail={links[peer.peerId]?.detail}
+      diagnosis={links[peer.peerId]?.diagnosis}
       stats={stats[peer.peerId] ?? null}
       remoteSharing={Boolean(remoteSharing[peer.peerId])}
       /**
@@ -2235,6 +2255,15 @@ interface VideoTileProps {
   stream: MediaStream | null;
   linkState: string;
   detail?: string;
+  /**
+   * 归因结论。**这是「为什么连不上」第一次出现在界面上** ——
+   * 此前只有日志面板里有，而它默认收起，于是 1.3.2 加的「只能 TURN」这种
+   * 可行动结论用户根本看不见（用户从日志面板默认收起这条就已经吃过亏）。
+   *
+   * undefined 表示「还没有诊断」（链路刚建、state 还没填上），
+   * 此时不显示任何条 —— 别拿 undefined 当默认值渲染出一句「正在连接」。
+   */
+  diagnosis?: LinkDiagnosis;
   stats: LinkStats | null;
   self?: boolean;
   sharing?: boolean;
@@ -2273,6 +2302,7 @@ function VideoTile({
   stream,
   linkState,
   detail,
+  diagnosis,
   stats,
   self,
   remoteSharing,
@@ -2420,6 +2450,25 @@ function VideoTile({
         </div>
       )}
 
+      {/*
+        归因条：只在该说的时候说。
+        - `ok` 不显示（牌子本身已经写着「已连接」，多一行是噪音）
+        - `connecting` 不显示（那是正常状态，不必解释）
+        - 其余四种是「有问题或正在努力」，必须让用户看见
+      */}
+      {diagnosis && diagnosis.kind !== 'ok' && diagnosis.kind !== 'connecting' && !compact && (
+        <div
+          className={`tile__diag tile__diag--${diagnosis.kind}`}
+          title={DIAG_TITLE(diagnosis)}
+        >
+          <span className="tile__diagtext">{diagnosis.summary}</span>
+          {diagnosis.detail && <span className="tile__diagdetail">{diagnosis.detail}</span>}
+          {/* 候选构成是判据本身（有 srflx/relay 与否决定归到 needs-turn 还是 needs-stun），
+              值得占一行给用户看：他自己就能判断「我这边的网络到底通没通」。 */}
+          {diagnosis.candidates && <span className="tile__diagcand">{diagnosis.candidates}</span>}
+        </div>
+      )}
+
       <div className="tile__header">
         <span className="tile__title">{title}</span>
         {!compact && self && <span className="tag tag--live">{t('tile.tagLocal')}</span>}
@@ -2508,6 +2557,19 @@ function VideoTile({
         {!compact && !self && hasAudio === false && <span className="tag">{t('tile.tagNoAudio')}</span>}
         {!compact && (
           <span className={`tag tag--link-${linkState}`}>{LINK_LABEL[linkState] ? t(LINK_LABEL[linkState]) : linkState}</span>
+        )}
+        {/*
+          缩略格只有 168x95，放不下一行说明 —— 但「为什么别人黑屏」这个问题
+          不能只在放大后才答。给一个红点，鼠标悬停出完整结论。
+          省略号而不是完整文字：缩略格里三个字也挤不下。
+        */}
+        {compact && diagnosis && diagnosis.kind !== 'ok' && diagnosis.kind !== 'connecting' && (
+          <span
+            className={`tile__diagdot tile__diagdot--${diagnosis.kind}`}
+            title={DIAG_TITLE(diagnosis)}
+          >
+            {DIAG_SHORT[diagnosis.kind] ?? '!'}
+          </span>
         )}
       </div>
 

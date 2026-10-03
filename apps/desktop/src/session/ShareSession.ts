@@ -9,6 +9,7 @@ import { DEFAULT_SIGNALING_URL, buildIceServers } from '@game-share/shared';
 import { CaptureError, CaptureManager } from '../media/CaptureManager';
 import { MicCapture, type MicSettings } from '../media/MicCapture';
 import { MeshManager } from '../rtc/MeshManager';
+import type { LinkDiagnosis } from '../rtc/PeerLink';
 import type { LinkState, RemoteTracks } from '../rtc/types';
 import {
   SignalingClient,
@@ -36,9 +37,27 @@ import type { AudioCaptureFailure, AudioCaptureMode } from '../types/global';
 
 const MAX_LOG_LINES = 300;
 
+/**
+ * 诊断刷新间隔。
+ *
+ * 取 1s 是权衡：自愈最快一档退避是 10s，再密没有信息增益；
+ * 而最慢那档 60s，1s 足以跟上进度。**别为了「看起来更实时」调到 100ms**
+ * —— 那会让整棵组件树每秒重渲一次，拆分布局的帧泵白跑（见 #startDiagnosisPolling）。
+ */
+const DIAGNOSIS_POLL_MS = 1_000;
+
 export interface PeerLinkState {
   state: LinkState;
   detail: string;
+  /**
+   * 归因结论（可上界面的一句话）。
+   *
+   * **为什么挂在链路状态里而不是单独一个 map**：这份结论是**从链路派生**的 ——
+   * 自愈每重试一次、退避每进一档，它都会变。挂在 links 下面才能保证
+   * 「链路一变，诊断跟着变」，不会出现状态说 failed、诊断还停在
+   * 「正在连接」这种自相矛盾的显示。
+   */
+  diagnosis: LinkDiagnosis;
 }
 
 export interface SessionState {
@@ -142,6 +161,8 @@ export class ShareSession {
   #serverUrl = DEFAULT_SIGNALING_URL;
   /** 上一条连接状态日志，用于抑制重连风暴刷屏（见 #bindSignaling） */
   #lastConnLog = '';
+  /** 诊断轮询定时器。见 #startDiagnosisPolling */
+  #diagnosisTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.signaling = new SignalingClient();
@@ -373,7 +394,13 @@ export class ShareSession {
           // 成员列表是链路归属的唯一依据：不在列表里的对端，状态变化一律丢弃。
           if (!this.#isMember(peerId)) return;
           this.#patch({
-            links: { ...this.#state.links, [peerId]: { state, detail: detail ?? '' } },
+            links: {
+              ...this.#state.links,
+              // 诊断在这里现取：它是链路的派生属性，写进 state 的那一刻
+              // 就是那一份真实值。存在 state 里而不是每次渲染现算，
+              // 是为了让 React 靠引用变化判断更新（下面注释有说明）。
+              [peerId]: { state, detail: detail ?? '', diagnosis: this.#linkDiagnosisOf(peerId) },
+            },
           });
         },
         onRemoteStream: (peerId, stream) => {
@@ -402,6 +429,10 @@ export class ShareSession {
     }
 
     this.#mesh.syncPeers([room.self.peerId, ...room.peers.map((p) => p.peerId)]);
+
+    // 诊断轮询跟着 Mesh 走：Mesh 重建时旧定时器必须掐掉，否则会出现两个轮询
+    // 同时往同一个 state 写 —— 表现为诊断偶尔"跳"回去。
+    this.#startDiagnosisPolling();
   }
 
   /** 把当前真实存在的本地轨补挂到 Mesh 上（进房 / 重建 Mesh 后用） */
@@ -423,6 +454,70 @@ export class ShareSession {
    * 用来挡住「链路拆除时的收尾回调」：那些回调发生在成员已被移除之后，
    * 若不拦截就会把已经删掉的状态重新写回来。
    */
+  /**
+   * 某条链路此刻的归因。链路不在时给一个中性值而不是抛 ——
+   * 调用方都是「顺手取一下」，为拿不到而抛异常只会把整条渲染路径搞崩。
+   */
+  #linkDiagnosisOf(peerId: string): LinkDiagnosis {
+    const link = this.#mesh?.getLink(peerId);
+    if (link) return link.diagnosis;
+    return { kind: 'connecting', summary: '正在连接…', detail: '', candidates: '' };
+  }
+
+  /**
+   * 定时刷新诊断。
+   *
+   * **为什么必须轮询，不能只靠 `onLinkStateChange`**：自愈的重试进度
+   * （attempts / scheduled / pending）会在**状态不变**的情况下推进 ——
+   * `disconnected` 连着来几次，每次都进 `onLinkStateChange`，但退避档位、
+   * 重试次数都在变；而 `punching → punching` 之间界面看不出区别，
+   * 用户却需要看到「正在第 2 次重试」。
+   *
+   * 间隔取 1s：退避最快的一档是 10s，再密也没意义；而自愈最慢的一档 60s，
+   * 1s 轮询足以跟上。
+   *
+   * **只在值真的变了时才 patch**：否则 1 秒一次 `#patch` 会让整个 state
+   * 换新引用 → 所有订阅者重渲染 → 拆分布局的帧泵白跑。
+   * 连接正常时（diagnosis.kind === 'ok'）直接跳过，连比较都省了。
+   */
+  #startDiagnosisPolling(): void {
+    this.#stopDiagnosisPolling();
+    this.#diagnosisTimer = setInterval(() => {
+      const room = this.#state.room;
+      if (!room || !this.#mesh) return;
+
+      const peers = [room.self.peerId, ...room.peers.map((p) => p.peerId)];
+      let changed = false;
+      const next: Record<string, PeerLinkState> = { ...this.#state.links };
+
+      for (const peerId of peers) {
+        const cur = next[peerId];
+        if (!cur || cur.diagnosis.kind === 'ok') continue;
+        const fresh = this.#linkDiagnosisOf(peerId);
+        // 引用比较：诊断是个小对象，逐字段比反而更啰嗦，
+        // 而它每次都是新生成的 —— 只有真变了才会不等。
+        if (
+          fresh.kind !== cur.diagnosis.kind ||
+          fresh.summary !== cur.diagnosis.summary ||
+          fresh.detail !== cur.diagnosis.detail
+        ) {
+          next[peerId] = { ...cur, diagnosis: fresh };
+          changed = true;
+        }
+      }
+
+      if (changed) this.#patch({ links: next });
+    }, DIAGNOSIS_POLL_MS);
+  }
+
+  #stopDiagnosisPolling(): void {
+    if (this.#diagnosisTimer !== null) {
+      clearInterval(this.#diagnosisTimer);
+      this.#diagnosisTimer = null;
+    }
+  }
+
+  /** 把某位成员此刻在不在房间（重连/离开时重新判定） */
   #isMember(peerId: string): boolean {
     const room = this.#state.room;
     if (!room) return false;
@@ -461,6 +556,9 @@ export class ShareSession {
   }
 
   #teardownMesh(): void {
+    // 轮询必须在 Mesh 置空**之前**停：否则那一秒里定时器醒来，
+    // `this.#mesh` 已是 null，`getDiagnoses()` 拿不到东西，会把诊断刷成默认值。
+    this.#stopDiagnosisPolling();
     this.#mesh?.close();
     this.#mesh = null;
   }
