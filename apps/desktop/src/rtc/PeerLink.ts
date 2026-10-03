@@ -107,6 +107,15 @@ export interface LinkDiagnostics {
   localVideoSdp: string[] | null;
   remoteVideoSdp: string[] | null;
   directionRepairAttempts: number;
+  /** ICE 自愈：已重开次数 / 上限。排障时用来判断「还有没有得试」 */
+  iceRestartAttempts: number;
+  iceRestartMaxAttempts: number;
+  /** 已调用 restartIce 但协商尚未落地。true 时不能再调，否则搅乱协商 */
+  iceRestartPending: boolean;
+  /** 退避定时器已排、正在等。排障时能看出「正卡在退避里等」而不是「压根没试」 */
+  iceRestartScheduled: boolean;
+  /** 等 answer 的兜底定时器已排。true = 这一轮重开的 offer 还没等到回应 */
+  iceRestartAnswerPending: boolean;
   hasSenderTrack: boolean;
   senderTrackState: MediaStreamTrackState | null;
   senderTrackMuted: boolean | null;
@@ -151,6 +160,54 @@ const MAX_DIRECTION_REPAIRS = 3;
 /** 建连后分几次检查方向，避开「刚 connected 时方向还没落定」的窗口 */
 const DIRECTION_CHECK_DELAYS_MS = [0, 1_200, 3_000];
 
+/**
+ * ICE 自愈：断链后重开 ICE 的退避表（单位 ms，索引 = 已重试次数）。
+ *
+ * **为什么值得做**：断链有两种病因，处置完全相反 ——
+ *   · 本来能通、只是断了（NAT 映射端口被运营商回收、换网络、WiFi 抖动）
+ *     ⇒ 重开 ICE 就能救回来，媒体轨与编码参数全部保留，用户零感知
+ *   · 本来就通不了（两端都在对称 NAT / CGNAT）
+ *     ⇒ 无论重试几次都不会成功
+ * 重开 ICE 只能救第一类，但代价极小（不动协议、不动架构），
+ * 而第二类会被退避表挡在几次之内 —— 到顶就打住并明说「只能 TURN」，
+ * 不会变成一条每分钟重开一次的僵尸链路。
+ *
+ * 退避本身是必须的：NAT 映射端口的回收周期通常是分钟级，
+ * 立刻重试只会再拿一个同样打不通的映射；间隔拉长才有碰上「窗口重开」的机会。
+ */
+const ICE_RESTART_BACKOFF_MS = [0, 10_000, 25_000, 60_000];
+
+/** 超过这个次数就认定「不是抖动，是真不通」，停止重试并给出最终判读 */
+const ICE_RESTART_MAX_ATTEMPTS = ICE_RESTART_BACKOFF_MS.length;
+
+/**
+ * `disconnected` 的宽限期。
+ *
+ * `disconnected` 是中间态而非终点（Chromium 自己也会在若干秒后转 failed），
+ * 短暂抖动常常在宽限期内自己恢复。**别一断就重开**：restartIce 会重跑一遍
+ * 完整候选收集，抢在自愈前面反而拖慢恢复。
+ */
+const DISCONNECTED_GRACE_MS = 4_000;
+
+/**
+ * connected 后要稳定这么久，才把重试配额还回去。
+ *
+ * 直接在 connected 时清零会让「重启成功 → 立刻又断」无限循环；
+ * 而完全不清零又会让一次下午的正常抖动把配额耗光，最后真断时已经没得试。
+ */
+const ICE_RESTART_RESET_MS = 10_000;
+
+/**
+ * offer 发出后等 answer 的兜底超时。
+ *
+ * 没有它会死锁：`pending` 靠 answer 落地或 connected 来解除，
+ * 而「offer 发出去了、对端却已经走了」时这两条都不会发生 ——
+ * pending 永久为 true，之后所有退避重试都被 `#scheduleIceRestart` 挡掉，
+ * 链路变成一条再也不肯自愈的僵尸（成员列表过滤会把它从 UI 上删掉，
+ * 于是这条僵尸还会静默活到房间解散）。
+ */
+const ICE_RESTART_ANSWER_TIMEOUT_MS = 15_000;
+
 export class PeerLink {
   readonly remotePeerId: string;
   readonly pc: RTCPeerConnection;
@@ -183,6 +240,23 @@ export class PeerLink {
   #appliedQuality: QualityLevel | null = null;
   #qualityLogDone = false;
   #directionRepairAttempts = 0;
+  /**
+   * ICE 自愈的状态。
+   *
+   * 三者分开记，因为它们回答的是三个不同的问题：
+   *   · `#iceRestartAttempts` —— 已经重开过几次（决定还能不能试、该等多久）
+   *   · `#iceRestartPending`  —— 已调用 restartIce()、协商还没落地
+   *     （这段时间里**不能**再调，否则会把正在进行的协商搅乱）
+   *   · `#iceRestartTimer`     —— 退避等待中的定时器（close 时必须清掉，
+   *     否则链路销毁后仍会醒来打日志）
+   */
+  #iceRestartAttempts = 0;
+  #iceRestartPending = false;
+  #iceRestartTimer: ReturnType<typeof setTimeout> | null = null;
+  /** connected 稳定期的定时器。与上面的退避定时器分开：两者可能同时存在 */
+  #iceRestartResetTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 等 answer 的兜底定时器。与上面两个都分开，三者可能同时存在 */
+  #iceRestartAnswerTimer: ReturnType<typeof setTimeout> | null = null;
   /** 保证「挂轨道 → 生成 offer」不会抢跑，否则会协商出单向 m-line */
   #pendingTrackApply: Promise<void> = Promise.resolve();
   #closed = false;
@@ -277,13 +351,7 @@ export class PeerLink {
       this.#signaling.sendIceCandidate(this.remotePeerId, candidate.toJSON());
     };
 
-    // 收集完成时汇总一次 —— 这是「本机到底有没有拿到公网映射地址」的唯一留痕。
-    // 不走这里的话，failed 之后我们只剩一条 code=701，而它既可能伴随成功、
-    // 也可能伴随失败，读不出结论。
-    this.pc.onicegatheringstatechange = () => {
-      if (this.pc.iceGatheringState !== 'complete') return;
-      this.#log(`候选收集完成 ${this.remotePeerId}：${this.#describeCandidateTypes()}`);
-    };
+    // 收集开始/完成的汇总挂在 #bind 末尾（与 ICE 自愈的状态机放在一起）
 
     this.pc.ontrack = (event) => {
       // 用 replaceTrack 发送时远端 track 不挂在任何 stream 上，
@@ -325,15 +393,45 @@ export class PeerLink {
     };
 
     this.pc.onconnectionstatechange = () => {
+      const prev = this.#state;
       this.#emitState();
-      if (this.pc.connectionState === 'connected') {
+      const now = this.pc.connectionState;
+      if (now === 'connected') {
         void this.#applyQuality();
         this.#scheduleDirectionCheck();
+        // 从断链回来才算数：connected 只说明此刻通了，
+        // 还得再稳一段时间才把重试配额还回去，否则「通了又断」会打转。
+        if (prev === 'disconnected' || prev === 'failed') {
+          this.#scheduleIceRestartReset();
+        }
+        return;
+      }
+      if (now === 'disconnected') {
+        // 中间态：先给自愈留宽限期，别抢在 Chromium 自己恢复前面动手
+        this.#scheduleIceRestart('链路断开', DISCONNECTED_GRACE_MS);
+        return;
+      }
+      if (now === 'failed') {
+        // 终态判定，但「本来能通只是断了」仍可救 —— 已拿到公网映射时
+        // 尤其值得试：NAT 映射端口被回收是分钟级的，换一批候选就能通。
+        this.#scheduleIceRestart('ICE failed', 0);
       }
     };
 
     this.pc.oniceconnectionstatechange = () => {
       this.#emitState();
+    };
+
+    /**
+     * 重开后候选会重新收集 —— 每轮都从零计数，否则判读会混进上一轮数据。
+     *
+     * 挂在 `gathering` 而不是 `complete`：真正要拦的是「重开后又开始收集」，
+     * 而 gathering 是收集的起点，`complete` 那一刻数据已经是两轮混合的了。
+     */
+    this.pc.onicegatheringstatechange = () => {
+      if (this.pc.iceGatheringState === 'gathering') this.#resetCandidateTypes();
+      if (this.pc.iceGatheringState !== 'complete') return;
+      this.#log(`候选收集完成 ${this.remotePeerId}：${this.#describeCandidateTypes()}`);
     };
 
     this.pc.onicecandidateerror = (event) => {
@@ -386,6 +484,175 @@ export class PeerLink {
       : '一个 STUN 都没成 ⇒ 问题在 DNS 或出网 UDP；先按 `npm run check:stun` 的实测结果换节点';
   }
 
+  /* ---------------- ICE 自愈 ---------------- */
+
+  /**
+   * 链路掉到 disconnected / failed 时安排一次重开。
+   *
+   * **只在断链时调用**，正常链路永远不碰。
+   *
+   * 关键取舍：`restartIce()` 会重跑一遍完整候选收集，但它**保留已有媒体轨与
+   * 编码参数** —— 也就是说「本来能通、只是断了」的场景能零感知救回来，
+   * 不必重建链路、不必让用户重进房间。这是 M8（TURN）之前唯一能实打实
+   * 改善断链的动作，而 TURN 解决的是「两端都在对称 NAT」这种本来无解的情况。
+   *
+   * 代价是「本来就通不了」的场景会白等 —— 所以有退避表与次数上限，
+   * 到顶就停手并把最终判读说清楚，绝不无限重试。
+   *
+   * @param graceMs 状态本身的宽限（`disconnected` 给 4s 等它自愈，`failed` 给 0）。
+   *                与退避档位**相加**而不是二选一：两者要的东西不同 ——
+   *                宽限针对「这次断链可能是暂时的」，退避针对「已经试过几次了」。
+   */
+  #scheduleIceRestart(reason: string, graceMs: number): void {
+    if (this.#closed) return;
+    // 被动方不参与重开（见 #restartIce）。**必须在这里就返回**而不是排个定时器：
+    // 否则每次断链都会白跑一次退避，等到真该重试时配额已经被这些空转跑满了。
+    if (!this.#initiator) return;
+    // 已有重开在途：重复调会把正在落地的协商搅乱，直接跳过
+    if (this.#iceRestartPending) return;
+    // 退避表已走完 ⇒ 认定不是抖动，重试再多次也是白试
+    if (this.#iceRestartAttempts >= ICE_RESTART_MAX_ATTEMPTS) {
+      this.#log(
+        `ICE 重开已达上限 ${ICE_RESTART_MAX_ATTEMPTS} 次仍不通，判定为真不通，` +
+          `不再重试 → ${this.remotePeerId}（${this.#diagnoseFailure()}）`,
+      );
+      return;
+    }
+
+    // 退避按「已重试次数」取档：第 1 次用索引 0（即 0ms，立即救），之后逐级拉长。
+    // 这条 setTimeout 的 delay **就是**退避表本身 ——
+    // 别在旁边另算一份只打日志的 backoff，那样等于退避没生效（这个坑踩过：
+    // 反向验证时把退避表全改成 0，断言居然还是全绿）。
+    const backoff = ICE_RESTART_BACKOFF_MS[this.#iceRestartAttempts] ?? 0;
+    const delay = graceMs + backoff;
+    // 重排前先清掉上一个 —— `#iceRestartTimer` 是单值字段，不清的话
+    // 新定时器会把它盖掉，而**旧定时器并不会消失**（只是再也拿不到了）：
+    // 于是「断链 → 排退避 → 退避期间又断链」会把退避无限往后推，
+    // 表现为 `iceRestartScheduled` 永远为 true、一次都执行不到。
+    // （反向验证抓到的：连打 3 轮后 attempts 仍是 1，第二个定时器被第三个盖掉了。）
+    if (this.#iceRestartTimer !== null) {
+      clearTimeout(this.#iceRestartTimer);
+    }
+    this.#iceRestartTimer = setTimeout(() => {
+      this.#iceRestartTimer = null;
+      void this.#restartIce(reason, backoff);
+    }, delay);
+  }
+
+  /**
+   * 执行一次 ICE 重开。
+   *
+   * `restartIce()` 本身只是**打标记**：它让下一次 `createOffer()` 带上新的
+   * ICE 凭据，并触发 `negotiationneeded`。真正把新凭据送到对端靠的是那次协商 ——
+   * 而协商只由主动方发起（见构造函数与 onnegotiationneeded）。
+   *
+   * ⇒ **重开只能由主动方执行**。被动方这里什么都不做：
+   * 调 restartIce() 只会留下一个永远等不到 createOffer 的脏标记
+   * （被动方的 onnegotiationneeded 直接 return），下次真协商时凭据已经不对了。
+   * 这不构成问题，因为 ICE 的 consent 检查是双向的：被动方察觉断链时，
+   * 主动方同样会因收不到响应而走到 disconnected/failed，由它发起重开即可。
+   */
+  async #restartIce(reason: string, backoffMs: number): Promise<void> {
+    if (this.#closed) return;
+    // 主动方守卫在 #scheduleIceRestart 里就做了（那里早退，避免空转耗配额），
+    // 这里再挡一道是因为这个方法也可能被别处调到。
+    if (!this.#initiator) return;
+
+    // 上一次重开还在等协商落地 ⇒ 这次跳过，避免连着 restartIce
+    if (this.#iceRestartPending) return;
+    /**
+     * 上限**在这里也要查一遍**，不能只靠 `#scheduleIceRestart`。
+     *
+     * 那是同一道检查，但两次调用之间隔着一次 setTimeout：
+     * 排定时器时 attempts=3（未到顶）→ 等待期间又断链 → attempts 仍可能是 3，
+     * 但两个定时器都会醒、都看到「未到顶」⇒ 实际重试次数会超过上限。
+     * （这个 bug 由反向验证抓到：连打 8 轮后 attempts 到了 5 而上限是 4。）
+     */
+    if (this.#iceRestartAttempts >= ICE_RESTART_MAX_ATTEMPTS) {
+      this.#log(
+        `ICE 重开已达上限 ${ICE_RESTART_MAX_ATTEMPTS} 次仍不通，判定为真不通，` +
+          `不再重试 → ${this.remotePeerId}（${this.#diagnoseFailure()}）`,
+      );
+      return;
+    }
+    // 协商中途（signalingState 非 stable）重开会拿到不一致的 SDP
+    if (this.pc.signalingState !== 'stable') {
+      this.#log(
+        `ICE 重开延后（正在协商，signalingState=${this.pc.signalingState}）→ ${this.remotePeerId}`,
+      );
+      return;
+    }
+
+    const attempt = this.#iceRestartAttempts + 1;
+    this.#iceRestartAttempts = attempt;
+    this.#iceRestartPending = true;
+
+    try {
+      this.pc.restartIce();
+      this.#log(
+        `ICE 重开 ${attempt}/${ICE_RESTART_MAX_ATTEMPTS}（${reason}，退避 ${backoffMs}ms）→ ` +
+          `${this.remotePeerId}：${this.#describeCandidateTypes()}`,
+      );
+      // 兜底：answer 迟迟不来就把 pending 放掉，否则这条链路再也不肯自愈。
+      // 正常路径由 handleAnswer 提前解除，这里只是防「offer 石沉大海」。
+      this.#iceRestartAnswerTimer = setTimeout(() => {
+        this.#iceRestartAnswerTimer = null;
+        if (this.#closed || !this.#iceRestartPending) return;
+        this.#iceRestartPending = false;
+        this.#log(
+          `ICE 重开后 ${ICE_RESTART_ANSWER_TIMEOUT_MS}ms 未收到 answer，放开 pending 等待下一轮 → ` +
+            `${this.remotePeerId}`,
+        );
+      }, ICE_RESTART_ANSWER_TIMEOUT_MS);
+      // restartIce 只发标记，真正的重开走这一次协商
+      await this.#negotiate();
+    } catch (err) {
+      this.#fail(err);
+    }
+  }
+
+  /**
+   * 候选收集重新开始时清空计数。
+   *
+   * **必须清**：重开后拿到的是一批全新候选，混进上一轮的话
+   * 「候选构成」那行会同时含两轮数据，failed 时的判读就不可信了 ——
+   * 而那正是 1.3.2 唯一可靠的归因依据。
+   */
+  #resetCandidateTypes(): void {
+    if (this.#candidateTypes.size > 0) {
+      this.#log(`候选计数清零（重开前）${this.remotePeerId}`);
+    }
+    this.#candidateTypes.clear();
+  }
+
+  /** 重开的退避计时器与协商状态归零 */
+  #markIceRecovered(): void {
+    if (this.#iceRestartAttempts > 0) {
+      this.#log(
+        `ICE 重开成功（累计尝试 ${this.#iceRestartAttempts} 次）→ ${this.remotePeerId}：` +
+          this.#describeCandidateTypes(),
+      );
+    }
+    this.#iceRestartAttempts = 0;
+    this.#iceRestartPending = false;
+  }
+
+  /**
+   * connected 稳定够久之后才归还重试配额。
+   *
+   * 不在 connected 当下清零的原因：重开成功后紧接着又断（映射端口又被回收）
+   * 会形成无限循环 —— 每次都以为「这是第一次断」，配额永远用不完。
+   */
+  #scheduleIceRestartReset(): void {
+    if (this.#iceRestartResetTimer !== null) return;
+    this.#iceRestartResetTimer = setTimeout(() => {
+      this.#iceRestartResetTimer = null;
+      // 期间又断了就作废：这次的配额不该给下一次断链用
+      if (this.#closed || this.pc.connectionState !== 'connected') return;
+      this.#markIceRecovered();
+    }, ICE_RESTART_RESET_MS);
+  }
+
   #emitState(): void {
     const raw = this.pc.connectionState;
     const next: LinkState =
@@ -410,9 +677,16 @@ export class PeerLink {
 
     // failed 时补两行：候选构成 + 判读。上面那行的格式一个字都不动 —— 现有断言盯着它。
     // 判据表见 ARCHITECTURE §6.1；「有 srflx 却仍 failed」这一支 2026-09-23 已实测确认。
+    //
+    // 注意这两行现在**可能重复出现**：ICE 重开后再次 failed 是正常的诊断序列
+    // （每轮都重新归因，因为候选是重新收集的），不是重复打印的 bug。
     if (next === 'failed') {
       this.#log(`候选构成 ${this.remotePeerId}：${this.#describeCandidateTypes()}`);
-      this.#log(`· 判读 ${this.remotePeerId}：${this.#diagnoseFailure()}`);
+      const attempt =
+        this.#iceRestartAttempts > 0
+          ? `（第 ${this.#iceRestartAttempts}/${ICE_RESTART_MAX_ATTEMPTS} 次重开后再失败）`
+          : '（尚未重试）';
+      this.#log(`· 判读 ${this.remotePeerId}：${this.#diagnoseFailure()}${attempt}`);
     }
   }
 
@@ -648,7 +922,19 @@ export class PeerLink {
       this.#remoteDescriptionSet = true;
       await this.#flushCandidates();
       await this.#applyQuality();
+      /**
+       * answer 落地 = 这一轮重开已经发完了，`pending` 的语义（等协商收尾）
+       * 到此为止。**必须在这里解除**，不能只靠 connected 后 10 秒那条路径：
+       * 重开后链路**仍然 failed** 是常事（NAT 类型不兼容时必然如此），
+       * 那时永远等不到 connected，`pending` 会永久卡住，之后的退避重试全部失效。
+       */
+      if (this.#iceRestartAnswerTimer !== null) {
+        clearTimeout(this.#iceRestartAnswerTimer);
+        this.#iceRestartAnswerTimer = null;
+      }
+      this.#iceRestartPending = false;
     } catch (err) {
+      this.#iceRestartPending = false;
       this.#fail(err);
     }
   }
@@ -857,6 +1143,11 @@ export class PeerLink {
       localVideoSdp: extractVideoSection(this.pc.localDescription?.sdp),
       remoteVideoSdp: extractVideoSection(this.pc.remoteDescription?.sdp),
       directionRepairAttempts: this.#directionRepairAttempts,
+      iceRestartAttempts: this.#iceRestartAttempts,
+      iceRestartMaxAttempts: ICE_RESTART_MAX_ATTEMPTS,
+      iceRestartPending: this.#iceRestartPending,
+      iceRestartScheduled: this.#iceRestartTimer !== null,
+      iceRestartAnswerPending: this.#iceRestartAnswerTimer !== null,
       hasSenderTrack: track !== null,
       senderTrackState: track?.readyState ?? null,
       senderTrackMuted: track ? track.muted : null,
@@ -887,6 +1178,22 @@ export class PeerLink {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+
+    // 定时器必须在 close 时清掉。链路已经销毁，退避定时器再醒来
+    // 只会对着一条不存在的链路重开 ICE 并写日志 —— mesh 8 人时
+    // 一个人退出会连带销毁 7 条链路，这些幽灵定时器全都得掐掉。
+    if (this.#iceRestartTimer !== null) {
+      clearTimeout(this.#iceRestartTimer);
+      this.#iceRestartTimer = null;
+    }
+    if (this.#iceRestartResetTimer !== null) {
+      clearTimeout(this.#iceRestartResetTimer);
+      this.#iceRestartResetTimer = null;
+    }
+    if (this.#iceRestartAnswerTimer !== null) {
+      clearTimeout(this.#iceRestartAnswerTimer);
+      this.#iceRestartAnswerTimer = null;
+    }
 
     this.pc.onnegotiationneeded = null;
     this.pc.onicecandidate = null;
