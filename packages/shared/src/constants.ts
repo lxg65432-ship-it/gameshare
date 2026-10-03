@@ -96,25 +96,48 @@ export interface IceServerConfig {
   urls: string | string[];
   username?: string;
   credential?: string;
+  /**
+   * 凭证类型。M8 之前没有 TURN 所以没这个字段。
+   *
+   * Chromium 在有 `username` 时默认按 `password` 处理，但**显式写出来**更稳：
+   * 一旦被误设成 `oauth`，失败表现是建链路时报「认证失败」，
+   * 而那句话完全看不出是 `credentialType` 写错了。
+   */
+  credentialType?: 'password';
 }
 
 /**
  * 生成 RTCPeerConnection 的 iceServers 配置。
- * M8 之前 turn 传 undefined，链路完全依赖 STUN + host candidate。
+ *
+ * 刻意用**选项对象**而不是位置参数：M8 之前它只有 STUN 一个可选来源，
+ * 于是签名是 `(stunServers?, turn?)`。加 TURN 之后调用点写成
+ * `buildIceServers(undefined, turn)` —— 那个 `undefined` 得翻回定义才看得懂在干嘛。
+ * 位置参数在这里纯属省不了几个字符。
+ *
+ * `options.turn` 由信令服务下发的临时凭证（M8）。**没配就传 undefined** ——
+ * 链路退回纯 STUN + host candidate，这正是 M8 之前的行为。
+ *
+ * ⚠️ TURN 的 `urls` 是**数组**（Cloudflare 会给 udp/tcp/tls 共四条路）。
+ * 别图省事只取第一条：企业网络与校园网经常只放行 443/tcp，
+ * 只留 3478/udp 等于在那些环境里白配 TURN。
  */
-export function buildIceServers(
-  stunServers: readonly string[] = DEFAULT_STUN_SERVERS,
-  turn?: IceServerConfig,
-): IceServerConfig[] {
+export function buildIceServers(options: {
+  /** 覆盖默认 STUN 列表（`check:stun` 体检用）。不传用 DEFAULT_STUN_SERVERS。 */
+  stunServers?: readonly string[];
+  turn?: IceServerConfig;
+} = {}): IceServerConfig[] {
+  const stunServers = options.stunServers ?? DEFAULT_STUN_SERVERS;
   const servers: IceServerConfig[] = [];
   if (stunServers.length > 0) {
     servers.push({ urls: [...stunServers] });
   }
+  const turn = options.turn;
   if (turn) {
     servers.push({
       urls: turn.urls,
       username: turn.username,
       credential: turn.credential,
+      ...(turn.credentialType === undefined ? {} : { credentialType: turn.credentialType }),
     });
   }
   return servers;

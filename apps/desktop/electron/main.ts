@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { loadConfig } from '@game-share/signaling';
 import { BrowserWindow, app, ipcMain, shell } from 'electron';
 
 import { registerCaptureHandlers } from './capture';
@@ -25,8 +26,23 @@ const isDev = Boolean(DEV_SERVER_URL);
  * 默认开启；端口被占用时不会报错，只会放弃监听并照常当客户端用
  * （详见 embedded-server.ts）。自动化验收时用 GAMESHARE_EMBEDDED_SERVER=0 关掉。
  */
+/**
+ * TURN 中继凭据（M8）。
+ *
+ * 刻意**复用信令包的 `loadConfig()`** 而不是在这里再读一遍 `TURN_KEY_ID` /
+ * `TURN_KEY_SECRET` —— 那两个变量名散在两处必然会漂（改了一处忘了另一处，
+ * 症状是「配了 TURN 却说没配」，而日志里什么都看不出来）。
+ *
+ * 代价是把信令的**全部**配置也一起解析了一遍，但 `loadConfig` 本身是纯函数、
+ * 不碰端口不监听，多跑一次没有副作用。
+ */
+function resolveTurnCredentials(): { keyId: string; keySecret: string } | null {
+  return loadConfig(process.env).turn;
+}
+
 const embeddedServer = new EmbeddedSignalingServer({
   enabled: process.env.GAMESHARE_EMBEDDED_SERVER !== '0',
+  turn: resolveTurnCredentials(),
 });
 
 /**

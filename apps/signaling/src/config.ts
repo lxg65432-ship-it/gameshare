@@ -17,6 +17,13 @@ export interface ServerConfig {
   /** '*' 表示开发期允许任意来源；生产环境应填具体域名 */
   corsOrigins: string[] | '*';
   logLevel: LogLevel;
+  /**
+   * TURN 凭证配置。**没配就是没有 TURN**（纯 P2P，M8 之前的行为）。
+   *
+   * 两个字段必须**成对**出现：只给一个说明配置写了一半，
+   * 那时候静默当「没配」会让排障的人以为程序坏了。
+   */
+  turn: { keyId: string; keySecret: string } | null;
 }
 
 const VALID_LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'];
@@ -26,6 +33,25 @@ function parseLogLevel(raw: string | undefined): LogLevel {
     return raw as LogLevel;
   }
   return 'info';
+}
+
+function parseTurn(
+  env: NodeJS.ProcessEnv,
+): { keyId: string; keySecret: string } | null {
+  const keyId = (env.TURN_KEY_ID ?? '').trim();
+  const keySecret = (env.TURN_KEY_SECRET ?? '').trim();
+  if (!keyId && !keySecret) return null;
+
+  if (!keyId || !keySecret) {
+    // 不 throw：信令服务不该因为 TURN 配置写错就起不来（它还能干别的），
+    // 但**必须喊出来** —— 静默降级会让人以为配好了。
+    console.warn(
+      '[config] TURN 配置不完整：TURN_KEY_ID 与 TURN_KEY_SECRET 必须成对出现。' +
+        '本次按「无 TURN」启动。',
+    );
+    return null;
+  }
+  return { keyId, keySecret };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -46,5 +72,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     host: env.HOST?.trim() || DEFAULT_SIGNALING_HOST,
     corsOrigins,
     logLevel: parseLogLevel(env.LOG_LEVEL),
+    turn: parseTurn(env),
   };
 }

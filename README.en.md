@@ -18,7 +18,8 @@ everyone can see what everyone else is playing. That's the whole idea.
 Open a room, send the invite, your friend pastes it and is in. Then everyone
 picks their game window and starts sharing: you see each other's screens, talk
 over voice chat, and hear each other's games. 2 to 8 players, video goes over
-direct WebRTC connections — no relay server in between. 8 is the architecture
+direct WebRTC connections; an optional TURN relay covers the networks where
+hole punching can't work (see below). 8 is the architecture
 headroom for mesh: with N players everyone uploads N-1 streams (8 players ≈
 42 Mbps up + 7 hardware encodes per machine), so how many of you can actually
 play depends on your upload bandwidth. The screenshot above is a local
@@ -203,10 +204,11 @@ Whether a real game window carries its real sound can only be checked by ear.
 
 ## Which networks can't connect
 
-This app **relays nothing** — the two ends must punch a direct hole through NAT.
-That is inherent to a peer-to-peer design. On the networks below, hole punching is
-physically impossible. It is not a bug: changing STUN servers, restarting, or
-reinstalling will not help.
+The preferred path is **direct (hole punching)** — the two ends connect straight to
+each other with no relay in between. But on some networks hole punching is
+physically impossible, and those need a **TURN relay** instead (see the end of this
+section). It is not a bug: changing STUN servers, restarting, or reinstalling will
+not help.
 
 | Network | Why it can't work |
 | --- | --- |
@@ -243,7 +245,38 @@ panel and look for these two lines (the client's own log output is in Chinese):
    **Both sides must install it**;
 3. **A TURN relay**: forwarding through a public server — the only option that
    works across such networks with **nothing for the other side to install**.
-   **Not implemented yet** (that is M8).
+   **This project has it integrated** (via Cloudflare Realtime TURN), but
+   **you have to configure it yourself**.
+
+### Enabling TURN
+
+Relay traffic goes through Cloudflare and is **billed by egress**
+($0.05/GB, with a 1,000 GB free tier). Everything still works without it — you
+just won't connect on the four network types listed above.
+
+1. Create a TURN Server in the
+   [Cloudflare dashboard](https://dash.cloudflare.com/)
+   (Realtime → TURN Server → Create) and note the **Turn Token ID** and
+   **API Token**.
+2. Set two environment variables **on the machine that runs the client**
+   (Windows PowerShell):
+
+   ```powershell
+   $env:TURN_KEY_ID     = "your Turn Token ID"
+   $env:TURN_KEY_SECRET = "your API Token"
+   ```
+
+3. Launch the client from that window. **The client must be restarted after
+   setting these.**
+
+⚠️ **The secret is effectively a billing password.** Don't paste it into chats or
+commit it. Signaling has no authentication, so anyone who reads it can spend your
+quota on someone else's behalf — that's why it is only read from the environment,
+never from a config file.
+
+The log panel states whether TURN was available for a session; check that line
+first when a connection fails. Without TURN configured the app **does not error**
+— it just stays pure P2P (which is what most people need anyway).
 
 ## Known limitations
 
@@ -253,7 +286,8 @@ panel and look for these two lines (the client's own log output is in Chinese):
    Win32 window APIs and never touches the game process, but a few games
    re-apply their own window style and defeat it;
 2. Some networks can't connect directly (campus / corporate / mobile data /
-   carrier-grade NAT) and there's no TURN fallback yet (that's M8) — see
+   carrier-grade NAT) — these need the TURN relay, which is **off by default** and
+   must be configured once (see "Enabling TURN" above). Without it, P2P only — see
    "Which networks can't connect" above;
 3. No authentication — see the security section;
 4. Kernel-level anti-cheat systems (EAC / BattlEye / Vanguard) may treat screen

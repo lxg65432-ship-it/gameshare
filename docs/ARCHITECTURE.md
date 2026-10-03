@@ -1044,7 +1044,7 @@ iceTransportPolicy = 'all'（默认）
 M8 的验收方式是把 `iceTransportPolicy` 强制设为 `relay`，
 确认视频仍能传输 —— 这能证明 TURN 链路本身是通的。
 
-M8 之前 `buildIceServers()` 的 `turn` 参数传 `undefined`，
+M8 之前 `buildIceServers()` 的 `turn` 参数传 `undefined`（现在也仍然支持不传），
 链路完全依赖 STUN + host candidate。
 
 ### 6.1 连不上时的归因：先看「候选构成」
@@ -1190,7 +1190,101 @@ Chromium 默认的 `iceRestartPolicy` 是 `'gathering'`，只在**首次**收候
 
 ⚠️ **这不能替代 TURN**。它救的是「本来能通只是断了」，对「两端都在对称 NAT」
 无能为力 —— 那类环境重试到顶仍会失败，日志会明说「判定为真不通 ⇒ 只能 TURN」。
-M8 之前，异地受限网络仍只能靠虚拟局域网顶。
+见 §6.5。
+
+### 6.5 TURN 中继（M8）
+
+§6.1 的判据里有一条「有 srflx 仍 failed ⇒ 需要中继」，这一节就是那个中继。
+它是**唯一**能让「两端都在对称 NAT / CGNAT」真通的路径 —— §6.3 的自愈救不了那类。
+
+**用的是 Cloudflare Realtime TURN**（托管，不自建 coturn）。
+`infra/coturn/` 那份配置是「自建方案」的备选，本项目没走它 ——
+自建意味着要自己扛证书、端口放行、带宽与运维，而用量只是朋友间的零头。
+
+#### 凭证为什么必须走服务端
+
+TURN 有两层凭据：**key secret**（长期，创建 key 时返回一次，丢了只能重建）
+与**临时凭证**（`username` / `credential`，发给客户端）。
+只有临时凭证能进客户端 —— 本项目的信令**没有鉴权**，
+key secret 一旦出现在客户端内存里，任何能连上信令的人都能拿你的额度替别人中继。
+
+⚠️ **凭证不是本地 HMAC 算出来的**。那是 coturn / TURN REST API 的老做法；
+Cloudflare 要求把签发请求发到 `rtc.live.cloudflare.com`，由它返回。
+本地算出来的凭证一律无效。已核对 Cloudflare 官方 skills 仓库
+`skills/cloudflare/references/turn/api.md`（官方文档站自己没写这一节）。
+
+#### 链路
+
+```
+客户端进房 ──▶ 信令 create-room / join-room
+                 │
+                 ├─ 未配 TURN ⇒ ack 不带 turn 字段 ⇒ 纯 P2P（M8 之前的行为）
+                 │
+                 └─ 配了 ⇒ POST rtc.live.cloudflare.com/v1/turn/keys/{id}/credentials/generate
+                        Authorization: Bearer <key secret>
+                        { ttl: 3600 }
+                    ◀── { iceServers: { urls, username, credential } }
+                 │
+                 └─ ack 里带 turn（不含 secret）⇒ buildIceServers() ⇒ RTCPeerConnection
+```
+
+**挂在 ack 上而不是单独一个事件**：客户端只在**进房那一刻**需要一次 iceServers，
+早给了没人用，晚给了链路已经建完。
+
+`iceTransportPolicy` 保持默认的 all —— 直连优先、TURN 兜底，
+这是 TURN 的正确用法（强制 relay 只在 IoT 这类要确定性的场景才用）。
+
+#### 三个容易踩的点
+
+**1. 端口 53 要滤，但不能用子串匹配。** Chromium 把 53 当 DNS 保留端口。
+Cloudflare 官方 gotchas 给的示例是 `urls.filter(u => !u.includes(':53'))` ——
+**这是错的**：它会把 `:5349` 一起干掉，而 5349/443 恰恰是唯一能穿过
+企业防火墙与校园网的那条 TLS 路。症状极其隐蔽：不报错，TURN 看起来「配上了」，
+只是在那些网络里静默失效。必须**解析出端口再比大小**。
+（`check:turn` 用例 1 就是钉这一条，且断言本身也不能写成 `includes(':53')` ——
+那会命中 `:5349`，正好是它要防的 bug 自己。这个坑本项目踩过一次。）
+
+**2. TTL 上限 48 小时，超了签发请求被直接拒。** 本项目取 1 小时。
+凭证过期**不会立刻断链**，只在需要新分配（ICE 重开）时才失败 ——
+那时 §6.3 的自愈会重试，缓存里的凭证也快到期了。
+
+**3. 失败不许阻塞建房。** TURN 是兜底不是前提，签发失败时按纯 P2P 继续，
+只记日志 + 上报 `lastError`。让一个大多数场景用不上的兜底把建房搞失败是本末倒置。
+但**绝不能静默**：`/health` 会自述 TURN 状态，进房日志也会明说「本次有无 TURN」。
+
+#### 计费口径（别按「免费」理解）
+
+官方 FAQ 原文：Cloudflare 边缘 → **TURN 客户端**的出站流量**计费**，
+$0.05/GB，有 **1000 GB 免费 tier**（官方页面未写清周期，按「不超额」理解最稳）。
+TURN ↔ Cloudflare **Realtime SFU / Stream** 之间不计费 ——
+**但本项目走 P2P Mesh、不用 SFU，所以 relay 流量是要计费的。**
+
+量级（按 FONT 360p 档 0.19 GB/小时）：1000 GB 够朋友间用很久。
+但**别当成无限量** —— 长时间挂着不关会持续消耗。
+
+#### 怎么配
+
+设两个环境变量（`infra/turn/.env.example` 有模板）：
+
+| 变量 | 是什么 |
+| --- | --- |
+| `TURN_KEY_ID` | Cloudflare TURN key 的 uid |
+| `TURN_KEY_SECRET` | key secret。**只在服务端，绝不入库** |
+
+刻意**不做界面输入框、不落配置文件** —— secret 是计费凭据，
+存进 `userData` 下的明文 JSON（本项目其他配置的存法）意味着它躺在磁盘上等人拷；
+做成输入框则意味着它进得去也就出得来。环境变量是这件事的现有惯例
+（`tunnel.bat` 同一路子，Cloudflare 官方也是 `wrangler secret put`）。
+
+代价是「要用 TURN 得在启动前设两个变量」 —— 对「朋友间内部使用」可接受：
+真到需要它的场景（两端都在对称 NAT）的人本来就在折腾网络环境了。
+
+验收：`npm run check:turn`（81 项）。
+**不验证真实中继是否可用** —— 那需要真的两端都在对称 NAT，
+本机自动化验不出来（同 §6.4 的边界：自动化只覆盖到候选层）。
+
+⚠️ 未配 TURN 时，界面归因会落到 `needs-turn` 并明说「需要中继」，
+那句话在没配 TURN 的机器上仍然成立 —— 它的意思是「该配 TURN」，不是「已配但没生效」。
 
 ---
 

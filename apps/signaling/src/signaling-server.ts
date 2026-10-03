@@ -25,6 +25,7 @@ import {
   type ShareStatePayload,
   type ShareStoppedPayload,
   type SignalEnvelope,
+  type TurnRelayPayload,
   type WebRtcAnswerPayload,
   type WebRtcOfferPayload,
 } from '@game-share/protocol';
@@ -32,6 +33,7 @@ import { createLogger, type Logger } from '@game-share/shared';
 import { Server, type Socket } from 'socket.io';
 
 import { RoomManager } from './room-manager';
+import { TurnCredentialProvider, TURN_CREDENTIAL_TTL_SEC } from './turn-credentials';
 
 /** SDP 体积上限，防止客户端塞超大字符串耗尽内存 */
 const MAX_SDP_LENGTH = 256 * 1024;
@@ -43,6 +45,10 @@ export interface SignalingServerOptions {
   host: string;
   corsOrigins: string[] | '*';
   logger?: Logger;
+  /** TURN 临时凭证的签发配置（M8）。不传 = 没有 TURN，走纯 P2P */
+  turn?: { keyId: string; keySecret: string } | null;
+  /** 注入用，测试时替换掉真实签发 */
+  turnProvider?: TurnCredentialProvider;
 }
 
 export interface ListenResult {
@@ -59,6 +65,15 @@ export interface SignalingServerHandle {
   readonly httpServer: HttpServer;
   readonly io: Server;
   readonly rooms: RoomManager;
+  /**
+   * TURN 凭证来源，未配置时为 null。
+   *
+   * 暴露出来是为了让 `/health` 报「本机到底有没有 TURN」——
+   * 排障时最费时间的一句话就是「我明明配了 TURN 为什么没走中继」。
+   */
+  readonly turn: TurnCredentialProvider | null;
+  /** 订阅 TURN 签发结果（成功/失败）。宿主用它刷新状态面板 */
+  onTurnActivity(callback: (info: { ok: boolean; error: string }) => void): () => void;
   listen(): Promise<ListenResult>;
   close(): Promise<void>;
 }
@@ -86,6 +101,43 @@ export function createSignalingServer(options: SignalingServerOptions): Signalin
   const log = options.logger ?? createLogger('signaling');
   const rooms = new RoomManager();
 
+  // TURN 凭证代理。没配就 null，客户端按纯 P2P 走（M8 之前的行为）。
+  const turn =
+    options.turnProvider ??
+    (options.turn
+      ? new TurnCredentialProvider({ ...options.turn, ttlSec: TURN_CREDENTIAL_TTL_SEC, logger: log })
+      : null);
+
+  if (turn) {
+    log.info('TURN 已启用：进房时下发 Cloudflare 临时凭证（两端都在对称 NAT 时靠它兜底）');
+  } else {
+    log.info('TURN 未配置：本次按纯 P2P 运行，两端都在对称 NAT / CGNAT 时必然连不通');
+  }
+
+  /**
+   * 取一份 TURN 凭证给客户端。
+   *
+   * **返回 undefined 而不是抛**：TURN 是兜底不是前提，取不到就让客户端
+   * 走纯 P2P，别把整个建房流程搞失败（理由见 TurnCredentialProvider.get）。
+   */
+  async function resolveTurn(): Promise<TurnRelayPayload | undefined> {
+    if (!turn) return undefined;
+    const result = await turn.get();
+    if (!result) return undefined;
+    const server = result.iceServers[0];
+    return {
+      urls: Array.isArray(server.urls) ? [...server.urls] : [server.urls],
+      username: server.username ?? '',
+      credential: server.credential ?? '',
+      // 漏掉这一行的话 credentialType 到客户端就成了 undefined，
+      // 而客户端正靠它把「凭证类型不对」和「凭证本身无效」区分开。
+      ...(server.credentialType === undefined
+        ? {}
+        : { credentialType: server.credentialType }),
+      expiresAt: result.expiresAt,
+    };
+  }
+
   const httpServer = createServer((req, res) => {
     if (req.url === '/health' || req.url === '/') {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
@@ -97,6 +149,17 @@ export function createSignalingServer(options: SignalingServerOptions): Signalin
           rooms: rooms.roomCount,
           peers: rooms.peerCount,
           uptimeSec: Math.round(process.uptime()),
+          // TURN 的自述面板。lastError 必须在最前面 ——
+          // 「配了 TURN 但签发失败」是最难自查的一类问题，
+          // 页面收起时用户看不到日志，只能看这里。
+          turn: turn
+            ? {
+                enabled: true,
+                issued: turn.issuedCount,
+                ttlSec: TURN_CREDENTIAL_TTL_SEC,
+                lastError: turn.lastError || null,
+              }
+            : { enabled: false },
         }),
       );
       return;
@@ -208,9 +271,14 @@ export function createSignalingServer(options: SignalingServerOptions): Signalin
       void socket.join(roomCode);
       log.info(`房间创建 room=${roomCode} host=${socket.id} 昵称=${self.nickname}`);
 
-      ack?.({
-        ok: true,
-        data: { roomCode, self, peers: [] } satisfies RoomCreatedPayload,
+      // ack 要等 TURN 凭证就绪才发出去。慢的那几百毫秒只在**首次**发生
+      //（之后走缓存），换来的是「一进房就带着完整 iceServers 建链路」——
+      // 晚发就得重建链路，那比等一下更糟。
+      void resolveTurn().then((turnRelay) => {
+        ack?.({
+          ok: true,
+          data: { roomCode, self, peers: [], ...(turnRelay ? { turn: turnRelay } : {}) } satisfies RoomCreatedPayload,
+        });
       });
     });
 
@@ -225,9 +293,11 @@ export function createSignalingServer(options: SignalingServerOptions): Signalin
       void socket.join(roomCode);
       log.info(`加入房间 room=${roomCode} peer=${socket.id} 昵称=${self.nickname} 已有=${others.length}`);
 
-      ack?.({
-        ok: true,
-        data: { roomCode, self, peers: others } satisfies RoomJoinedPayload,
+      void resolveTurn().then((turnRelay) => {
+        ack?.({
+          ok: true,
+          data: { roomCode, self, peers: others, ...(turnRelay ? { turn: turnRelay } : {}) } satisfies RoomJoinedPayload,
+        });
       });
 
       broadcastToRoom(socket, roomCode, ServerEvent.PeerJoined, {
@@ -340,6 +410,12 @@ export function createSignalingServer(options: SignalingServerOptions): Signalin
     httpServer,
     io,
     rooms,
+    turn,
+    onTurnActivity(callback) {
+      // 没配 TURN 时订阅是合法的（退订即可），不必报错 ——
+      // 宿主不该为了「有没有 TURN」写两套订阅逻辑。
+      return turn ? turn.onActivity(callback) : () => undefined;
+    },
     listen() {
       return new Promise<ListenResult>((resolve, reject) => {
         /**

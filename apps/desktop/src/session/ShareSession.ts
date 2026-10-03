@@ -3,8 +3,9 @@ import {
   type PeerInfo,
   type QualityLevel,
   type TrackRole,
+  type TurnRelayPayload,
 } from '@game-share/protocol';
-import { DEFAULT_SIGNALING_URL, buildIceServers } from '@game-share/shared';
+import { DEFAULT_SIGNALING_URL, buildIceServers, type IceServerConfig } from '@game-share/shared';
 
 import { CaptureError, CaptureManager } from '../media/CaptureManager';
 import { MicCapture, type MicSettings } from '../media/MicCapture';
@@ -18,7 +19,28 @@ import {
 } from '../signaling/SignalingClient';
 import type { AudioCaptureFailure, AudioCaptureMode } from '../types/global';
 
+/* ------------------------------------------------------------------ *
+ * 线格式 → 运行时配置
+ * ------------------------------------------------------------------ */
+
 /**
+ * `TurnRelayPayload`（线格式）→ `IceServerConfig`（RTCPeerConnection 要的）。
+ *
+ * 之所以是显式转换而不是直接 `as IceServerConfig`：两边是**不同类型**
+ * （见 protocol/events.ts 的说明），`expiresAt` 是协议专属字段、传进去
+ * 只会让 Chromium 收到一个不认识的键。写一次转换，将来协议加了字段
+ * 也会在这里被显式看见，而不是悄悄透传给 Chromium。
+ */
+function shareTurn(turn: TurnRelayPayload): IceServerConfig {
+  return {
+    urls: turn.urls,
+    username: turn.username,
+    credential: turn.credential,
+    ...(turn.credentialType === undefined ? {} : { credentialType: turn.credentialType }),
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * 业务编排层：把信令、Mesh、采集三块拼成一个「会话」。
  *
  * UI 与自动化验收都只依赖这一层 —— 保证脚本跑的是真实代码路径，
@@ -320,8 +342,9 @@ export class ShareSession {
 
   async createRoom(nickname: string): Promise<{ roomCode: string; self: PeerInfo; peers: PeerInfo[] }> {
     const data = await this.signaling.createRoom(nickname);
-    this.#enterRoom(data.roomCode, data.self, data.peers);
+    this.#enterRoom(data.roomCode, data.self, data.peers, data.turn);
     this.pushLog(`房间已创建：${data.roomCode}`);
+    this.#logTurnRelay(data.turn);
     return data;
   }
 
@@ -330,8 +353,9 @@ export class ShareSession {
     nickname: string,
   ): Promise<{ roomCode: string; self: PeerInfo; peers: PeerInfo[] }> {
     const data = await this.signaling.joinRoom(roomCode, nickname);
-    this.#enterRoom(data.roomCode, data.self, data.peers);
+    this.#enterRoom(data.roomCode, data.self, data.peers, data.turn);
     this.pushLog(`已加入房间：${data.roomCode}，当前 ${data.peers.length + 1} 人`);
+    this.#logTurnRelay(data.turn);
     return data;
   }
 
@@ -354,7 +378,7 @@ export class ShareSession {
    * 「谁当主动方」要靠它判定，所以 MeshManager 只能在这个时点构造，
    * 不能提前建好再补 selfPeerId。
    */
-  #enterRoom(roomCode: string, self: PeerInfo, peers: PeerInfo[]): void {
+  #enterRoom(roomCode: string, self: PeerInfo, peers: PeerInfo[], turn?: TurnRelayPayload): void {
     this.#teardownMesh();
 
     // 服务端在建房 / 加入的 ack 里已经把成员连同 `sharing` 一起带回来了，
@@ -373,17 +397,37 @@ export class ShareSession {
       remoteTracks: {},
       remoteSharing,
     });
-    this.#syncMesh();
+    this.#syncMesh(turn);
   }
 
-  #syncMesh(): void {
+  /**
+   * 记一句「本次有没有 TURN 兜底」。
+   *
+   * 为什么必须显式记：TURN 只在**直连失败后**才起作用，平时完全看不出它在不在。
+   * 用户（或我们自己）遇到连不上时，第一句要问的是「有 TURN 吗」——
+   * 答不出这个问题就只能靠猜。信令没配 TURN 也是同一回事：
+   * 那时界面上一片安静，谁也不知道兜底根本不存在。
+   */
+  #logTurnRelay(turn?: TurnRelayPayload): void {
+    if (!turn) {
+      this.pushLog('无 TURN 中继：本次按纯 P2P，两端都在对称 NAT / CGNAT 时会连不通');
+      return;
+    }
+    const minutes = Math.round((turn.expiresAt - Date.now()) / 60_000);
+    this.pushLog(
+      `TURN 中继已就绪（${turn.urls.length} 条地址，凭证约 ${minutes} 分钟后过期）：` +
+        turn.urls.join(' '),
+    );
+  }
+
+  #syncMesh(turn?: TurnRelayPayload): void {
     const room = this.#state.room;
     if (!room) return;
 
     if (!this.#mesh) {
       this.#mesh = new MeshManager({
         signaling: this.signaling,
-        iceServers: buildIceServers(),
+        iceServers: buildIceServers({ turn: turn ? shareTurn(turn) : undefined }),
         selfPeerId: room.self.peerId,
         getSourceHeight: () => this.capture.sourceHeight,
         getSourceWidth: () => this.capture.sourceWidth,

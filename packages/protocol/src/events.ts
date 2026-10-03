@@ -98,11 +98,43 @@ export interface LeaveRoomPayload {
   reason?: string;
 }
 
+/**
+ * 服务端下发的 TURN 中继配置（M8）。
+ *
+ * ⚠️ **这不是长期凭据**，是 Cloudflare 签发的临时凭证（默认 1 小时 TTL），
+ * 过期后需要重新向信令要。里面不含任何 secret。
+ *
+ * 放在 ack 里而不是单独一个事件：客户端建 Mesh 只需要在**进房那一刻**
+ * 拿到一次 iceServers。早给了没人用，晚给了链路已经建完。
+ *
+ * 为什么这里不直接复用 `shared` 的 `IceServerConfig`（protocol 刻意零依赖，
+ * 见 CONVENTIONS）：**两者不是同一个东西**。这是**线格式**（`urls` 必然是数组、
+ * 带协议专属的 `expiresAt`），那个是**运行时配置**（`urls` 允许字符串）。
+ * 强行统一会让协议依赖一个它不该依赖的包。
+ * 两者的兼容性由 `check-turn` 断言「本类型能直接喂给 buildIceServers」来钉住。
+ */
+export interface TurnRelayPayload {
+  urls: string[];
+  username: string;
+  credential: string;
+  /**
+   * 凭证类型。当前只有 `'password'`。
+   *
+   * 保留这个字段而不是硬编码在客户端：写错的表现是建链路时报「认证失败」，
+   * 而那句话完全看不出成因。带上它，错误就能定位到「凭证类型不对」这一层。
+   */
+  credentialType?: 'password';
+  /** 凭证到期时刻（epoch ms），客户端可据此提前重取 */
+  expiresAt: number;
+}
+
 export interface RoomCreatedPayload {
   roomCode: string;
   self: PeerInfo;
   /** 创建时房间为空，这里是空数组；保留字段让两端处理逻辑统一 */
   peers: PeerInfo[];
+  /** 服务端未配置 TURN 时为 undefined —— 客户端按纯 P2P 走 */
+  turn?: TurnRelayPayload;
 }
 
 export interface RoomJoinedPayload {
@@ -110,6 +142,7 @@ export interface RoomJoinedPayload {
   self: PeerInfo;
   /** 已在房间内的其他成员 —— 加入方需要对他们逐个发起 offer */
   peers: PeerInfo[];
+  turn?: TurnRelayPayload;
 }
 
 export interface LeaveRoomAckData {

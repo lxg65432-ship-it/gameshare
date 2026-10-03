@@ -27,3 +27,6 @@ export type {
 
 export { DEFAULT_SIGNALING_HOST, loadConfig } from './config';
 export type { ServerConfig } from './config';
+
+export { TurnCredentialProvider, filterChromiumBlockedUrls, TURN_CREDENTIAL_TTL_SEC } from './turn-credentials';
+export type { TurnCredentials, TurnCredentialOptions } from './turn-credentials';
