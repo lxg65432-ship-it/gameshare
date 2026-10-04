@@ -296,6 +296,9 @@
 | **点回游戏，浮窗就掉到游戏后面** | 游戏自己也置顶，同 topmost 带内竞争 | §4.13 |
 | 浮窗期间任务栏 / Alt+Tab 里**找不到客户端** | `setFocusable(false)` 的连带效果，退出浮窗即恢复 | §4.13 |
 | 浮窗**拖到某个大小就拖不动** | `minWidth` 没临时放宽 | §4.13 |
+| **浮窗里听不到某个开了麦、但没在共享画面的人** | `<audio>` 挂在 tile 里，而浮窗只摆正在共享的格子。判据在 `shared/voice-audience.ts`，**别把 `sharing` 掺进去** | §4.16 |
+| 改了 TURN 配置但**界面显示没变 / 没生效** | 环境变量**优先于**界面配置（`source` 字段会告诉你是哪来的）。要临时替换且不留痕就清掉环境变量 | §6.5 |
+| `check:turn-ui` 报「electron install incorrectly」 | 判据加载了会 import `electron` 的文件。本机 `ELECTRON_RUN_AS_NODE` 是预设的，纯 node 下 import electron 就炸 ⇒ 判据必须加载 `turn-store.ts`（纯逻辑层） | §6.5 |
 | 浮窗模式下**标题栏拖不动 / 最小化 / 最大化 / 关闭全都没反应** | 不可激活的窗口没有可用的非客户区 → **干脆不要原生边框**，全部自绘 | §4.13 |
 | 拆分后控制条**比设计的高一倍**、控件下面空一大块 | 浮窗下限 260x150 把 76 夹回去了 → 先 `setMinimumSize` 再 `setBounds` | §4.13 |
 | **「复制 / 复制邀请」点了毫无反应**（日志里其实写着「复制失败」） | 渲染层 `navigator.clipboard` 的写入权限被权限白名单拒掉（抛 `NotAllowedError`），且被 catch 成一行日志；**放开白名单也救不了浮窗**（不可聚焦时改抛 `Document is not focused`）→ 统一走主进程 `clipboard:write-text` | §4.14 |
@@ -379,8 +382,13 @@
 | 停止共享**必须**发 `setSharing(false)` | `stopShare` 一律通知对端；**换源不走它**（由 `startShare` 静默停旧源），否则面板闪一帧「未共享」 |
 | 加入失败的错**必须在界面上看得见** | 2026-09-18 补（原先是 M3 待办）：满员 / 房间不存在现在渲染成「加入失败：…」提示条；新加的报错入口别只 `pushLog` —— 日志面板默认收起，用户看到的是「点了没反应」 |
 | 改 `/health` 的 `service` 字段要同步 `SIGNALING_SERVICE_ID` | 判据认这个标识来分辨「对面是不是本应用」（`shared/reachability.ts`）。改了服务端而没改判据 ⇒ 功能**静默失效**（永远返回 unknown），`check:reachability` 会红 |
-| TURN 的 `TURN_KEY_ID` / `TURN_KEY_SECRET` **只从环境变量读** | secret 是**计费凭据**，而信令无鉴权（见下条）。存文件 / 做输入框都意味着它会被拷走。解析统一走信令包的 `loadConfig()`，别在别处再读一遍这两个变量名 |
+| TURN 凭据三级来源：**环境变量 > `userData` 下的 `turn-credentials.json` > 无** | 1.5.0 起允许界面配置了（`turn-store.ts`），但**环境变量仍优先** —— 想临时换一组凭据、不想留痕就走这条。两条都要，成对出现，只给一个按「没配」处理 |
+| TURN 的 secret **可以**落盘了（推翻原判断） | 原判断是「只从环境变量读」，理由是 secret 是计费凭据。现在推翻是因为「要用 TURN 得先开 PowerShell 设变量」，而 TURN 恰是**网络最差那批人**才需要的。防护做在明处：`userData` 下（`%APPDATA%`，默认只有当前用户可读）、界面只在建出来那一瞬显示一次、之后 `maskKeyId` 只给前 6 位、**`turn:get` 返回体永不含 secret**。⚠️ 这是「更方便」不是「更安全」 |
+| 建 key 的**账号 token 用完即弃、不落盘** | 它的权限比 key secret 大得多（能建/删这个账号下所有 TURN key），而建完 key 就没用了；key secret 反之，每次建房都要用。两者处理**刻意不同** |
+| **只有信令所在那台机器需要配 TURN，不是「谁是房主」** | TURN 凭证是信令在 create/join 的 ack 里签发的，而每台客户端都起着内置信令。配了那台 ⇒ 全场所有链路（含 a↔c 这种跟房主没关系的）都受益，**客人零操作**。流量费由开房的人出 |
+| 远端 `<audio>` 播放器**必须住在 tile 外面** | 挂在 tile 里 ⇒「能不能听见」被绑死在「格子在不在」上。而浮窗只摆**正在共享**的格子、`voice` 轨却与 `sharing` 解耦 ⇒ **开麦但没共享的人浮窗里听不见**（2026-10-04 修的真 bug）。常规模式按成员列表渲染全部格子，所以只有浮窗用户中招。判据在 `shared/voice-audience.ts`，**别把 `sharing` 掺进去** |
 | 改了 `buildIceServers` 的签名要同步 `check:turn` | 它在端到端那节直接调这个函数。**协议层 `TurnRelayPayload` 与运行时 `IceServerConfig` 是两个类型**（前者多一个 `expiresAt`），中间那次显式转换漏字段的话，`credentialType` 到客户端就成了 undefined |
+| **判据文件不许 import `electron`** | 本机 `ELECTRON_RUN_AS_NODE` 是预设的，electron 包在纯 node 下 import 就炸 ⇒ 判据跑不起来 = 没有判据。所以 `turn-store.ts`（纯逻辑，可跑）与 `turn-config.ts`（要 `app.getPath`）必须分开 |
 | 音频 device id 只有 `electron/audio/device-ids.ts` 一处产地 | 这几个字符串是**透传**给 Chromium 的，写错没有编译期提示，只有一句「采集失败」 |
 | 音频解析失败**不许静默降级** | 换成普通 loopback 会把自己播的远端语音采回去 → 双向啸叫；「有声音」≠「做对了」 |
 | koffi **不放进 `dependencies`** | 进了就会同时踩 `npmRebuild: false` 与「`apps/desktop` 依赖保持为空」两条约定；它靠 extraResources 落地 |
@@ -400,6 +408,8 @@
 | **打包后**验证内置信令 | `npm run check:embedded` |
 | 验证独立部署的信令产物（必须 CJS） | `npm run check:standalone` |
 | 验证 TURN 凭证签发与端口过滤 | `npm run check:turn` |
+| 验证 TURN 界面配置与「secret 不外泄」 | `npm run check:turn-ui` |
+| 验证「谁该被听见」（浮窗语音盲区） | `npm run check:voice-audience` |
 | 验证信令地址可用性判据（含旧隧道邀请失效） | `npm run check:reachability` |
 | 验证置顶能否压住全屏窗口 | `npm run check:topmost` |
 | 验证浮窗拆分模式（小窗 / 帧泵） | `npm run check:tiles` |

@@ -1,6 +1,6 @@
 {
   "name": "game-share",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "private": true,
   "description": "轻量级 Windows 多人游戏画面共享工具（WebRTC P2P Mesh）",
   "workspaces": [
@@ -34,7 +34,9 @@
     "check:tunnel": "node scripts/check-tunnel.mjs",
     "check:ice-restart": "node scripts/check-ice-restart.mjs",
     "check:turn": "node scripts/check-turn.mjs",
-    "check:reachability": "node scripts/check-reachability.mjs"
+    "check:turn-ui": "node scripts/check-turn-ui.mjs",
+    "check:reachability": "node scripts/check-reachability.mjs",
+    "check:voice-audience": "node scripts/check-voice-audience.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

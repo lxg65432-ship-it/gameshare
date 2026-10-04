@@ -481,6 +481,67 @@ body {
   background: rgba(76, 141, 255, 0.08);
 }
 
+/*
+ * TURN 配置区。
+ *
+ * 边框色刻意比 `.tunnel` 淡一档：隧道是「异地访问的常规手段」，
+ * TURN 是「连不上时的兜底」—— 后者不该在视觉上压过前者。
+ * 两者同权重会让人误以为 TURN 是每次都要配的东西。
+ */
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(140, 150, 170, 0.28);
+  border-radius: 9px;
+  background: rgba(140, 150, 170, 0.06);
+}
+
+.turn__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 两个输入框并排。窄屏时允许换行，别把按钮挤出视口 */
+.turn__row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.turn__row .input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+/* 「我已经有 key 了」的折叠区：默认收起，主路径只有「自动开通」一条 */
+.turn__manual {
+  margin-top: 2px;
+}
+
+.turn__manual > summary {
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.turn__manual[open] > summary {
+  margin-bottom: 6px;
+}
+
+/* 一次性 secret 的展示位：醒目，因为关掉就再也拿不到了 */
+.turn__oneshot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 176, 46, 0.5);
+  border-radius: 7px;
+  background: rgba(255, 176, 46, 0.1);
+}
+
 .tunnel__head {
   display: flex;
   align-items: center;

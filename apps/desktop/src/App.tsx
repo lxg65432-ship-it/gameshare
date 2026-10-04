@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { PeerInfo, QualityLevel } from '@game-share/protocol';
-import { DEFAULT_SIGNALING_URL } from '@game-share/shared';
+import { DEFAULT_SIGNALING_URL, remoteAudioAudience } from '@game-share/shared';
+
+import type { TurnUiStatus } from './types/global';
 
 import type {
   AudioCaptureMode,
@@ -271,6 +273,100 @@ export default function App() {
 
   /** 被放大到主画面的那一路；null 表示网格布局 */
   const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
+
+  /* ---------------- TURN 中继配置 ---------------- */
+
+  const [turnUi, setTurnUi] = useState<TurnUiStatus | null>(null);
+  const [turnBusy, setTurnBusy] = useState(false);
+  const [turnError, setTurnError] = useState('');
+  const [turnAccountId, setTurnAccountId] = useState('');
+  const [turnApiToken, setTurnApiToken] = useState('');
+  const [turnKeyIdInput, setTurnKeyIdInput] = useState('');
+  const [turnKeySecretInput, setTurnKeySecretInput] = useState('');
+  /**
+   * 「建出来了但没存住」时的一次性 secret 展示。
+   *
+   * **只在这个状态下非空，且用完即清**。Cloudflare 的 key 只在创建时返回一次，
+   * 接口拿不回来 —— 这种情况下不给他看就等于永远丢了。
+   * 所以明文只在这一刻出现在界面上，不写日志、不进剪贴板。
+   */
+  const [turnOneShotSecret, setTurnOneShotSecret] = useState('');
+
+  /** 刷新 TURN 状态。配置改动后必须重拉，否则界面显示的是旧值 */
+  const refreshTurn = useCallback(() => {
+    const api = window.gameShare?.turn;
+    if (!api) return;
+    void api.get().then((status) => {
+      setTurnUi(status);
+      // 账号 id 只在「没填过」时带入，不要覆盖用户正在输入的内容
+      setTurnAccountId((cur) => cur || status.accountId || '');
+    });
+  }, []);
+
+  useEffect(() => {
+    refreshTurn();
+    return window.gameShare?.server?.onStatus(() => refreshTurn());
+  }, [refreshTurn]);
+
+  const handleTurnCreate = useCallback(async () => {
+    const api = window.gameShare?.turn;
+    if (!api) return;
+    setTurnBusy(true);
+    setTurnError('');
+    setTurnOneShotSecret('');
+    try {
+      const res = await api.create(turnAccountId, turnApiToken);
+      if (res.ok) {
+        // token 用完即弃，不留在 state 里
+        setTurnApiToken('');
+        refreshTurn();
+        return;
+      }
+      setTurnError(res.error ?? t('turn.createFailed'));
+      if (res.keySecret) setTurnOneShotSecret(res.keySecret);
+    } finally {
+      setTurnBusy(false);
+    }
+  }, [turnAccountId, turnApiToken, refreshTurn, t]);
+
+  const handleTurnSaveManual = useCallback(async () => {
+    const api = window.gameShare?.turn;
+    if (!api) return;
+    setTurnBusy(true);
+    setTurnError('');
+    try {
+      const res = await api.save(turnKeyIdInput, turnKeySecretInput);
+      if (res.ok) {
+        setTurnKeyIdInput('');
+        setTurnKeySecretInput('');
+        refreshTurn();
+        return;
+      }
+      setTurnError(res.error ?? t('turn.saveFailed'));
+    } finally {
+      setTurnBusy(false);
+    }
+  }, [turnKeyIdInput, turnKeySecretInput, refreshTurn, t]);
+
+  const handleTurnClear = useCallback(async () => {
+    const api = window.gameShare?.turn;
+    if (!api) return;
+    setTurnBusy(true);
+    setTurnError('');
+    try {
+      await api.clear();
+      setTurnOneShotSecret('');
+      refreshTurn();
+    } finally {
+      setTurnBusy(false);
+    }
+  }, [refreshTurn]);
+
+  const turnConfigured = turnUi?.configured === true;
+  const turnState = turnUi?.turnState ?? 'off';
+  const turnIssued = turnUi?.turnIssued ?? 0;
+  const turnSource = turnUi?.source ?? 'none';
+  const turnKeyIdMasked = turnUi?.keyIdMasked ?? '';
 
   const serverUrlRef = useRef(serverUrl);
   serverUrlRef.current = serverUrl;
@@ -1347,6 +1443,21 @@ export default function App() {
 
   return (
     <div className={isFloat ? 'app app--float' : 'app'}>
+      {/*
+        远端语音 / 应用声音的播放器。
+
+        位置在**最外层、所有分支之外** —— 它一旦被放进某个条件分支里，
+        就会跟着那个分支的过滤条件一起消失（这正是它当初被塞进 tile 的后果：
+        浮窗按 `remoteSharing` 过滤格子 ⇒ 开麦但没共享的人听不见）。
+        声音是「房间里有没有人说话」，与「界面上摆几格画面」是两件事。
+      */}
+      <RemoteAudioOutlet
+        peers={remotePeers}
+        tracks={remoteTracks}
+        prefOf={peerAudioOf}
+        remoteSharing={remoteSharing}
+        selfPeerId={room?.self.peerId}
+      />
       <header className="app__header">
         <div className="app__title">
           <span className="app__logo">◧</span>
@@ -1639,6 +1750,135 @@ export default function App() {
                       <p className="hint hint--dim">{t('tunnel.firewall')}</p>
                     </>
                   )}
+
+                  {/* ---- TURN 中继 ----
+                      排在地址列表之后：地址是「怎么连」，TURN 是「连不上时的兜底」，
+                      不该和日常要用的信息抢位置。 */}
+                  <div className="turn">
+                    <div className="turn__head">
+                      <span className="tunnel__title">{t('turn.title')}</span>
+                      <span
+                        className={`dot dot--${
+                          turnState === 'ready' ? 'ok' : turnState === 'error' ? 'warn' : 'idle'
+                        }`}
+                      />
+                      <span className="collapse__state">
+                        {t(
+                          turnState === 'ready'
+                            ? 'turn.stateReady'
+                            : turnState === 'error'
+                              ? 'turn.stateError'
+                              : 'turn.stateOff',
+                        )}
+                        {turnIssued > 0 && fmt('turn.issued', { n: turnIssued })}
+                      </span>
+                    </div>
+
+                    {turnSource === 'env' && (
+                      <p className="hint hint--dim">{t('turn.fromEnv')}</p>
+                    )}
+
+                    {turnError && <p className="hint hint--warn">{turnError}</p>}
+
+                    {turnOneShotSecret && (
+                      <div className="turn__oneshot">
+                        <p className="hint hint--warn">{t('turn.oneShotWarn')}</p>
+                        <p className="serverurl serverurl--remote">{turnOneShotSecret}</p>
+                        <p className="hint hint--dim">{t('turn.oneShotHint')}</p>
+                      </div>
+                    )}
+
+                    {turnConfigured ? (
+                      <>
+                        <p className="hint hint--dim">
+                          {fmt('turn.configured', { id: turnKeyIdMasked || '------' })}
+                        </p>
+                        <div className="row">
+                          <button
+                            type="button"
+                            className="btn"
+                            disabled={turnBusy}
+                            onClick={() => void handleTurnClear()}
+                          >
+                            {t('turn.clear')}
+                          </button>
+                        </div>
+                        <p className="hint hint--dim">{t('turn.clearHint')}</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="hint hint--dim">{t('turn.offHint')}</p>
+
+                        {/* 两条路：自动建（要账号凭据）或手工填（已有 key） */}
+                        <div className="turn__row">
+                          <input
+                            className="input"
+                            type="text"
+                            placeholder={t('turn.accountIdPlaceholder')}
+                            value={turnAccountId}
+                            onChange={(e) => setTurnAccountId(e.target.value)}
+                            disabled={turnBusy}
+                            title={t('turn.accountIdTitle')}
+                          />
+                          <input
+                            className="input"
+                            type="password"
+                            placeholder={t('turn.apiTokenPlaceholder')}
+                            value={turnApiToken}
+                            onChange={(e) => setTurnApiToken(e.target.value)}
+                            disabled={turnBusy}
+                            title={t('turn.apiTokenTitle')}
+                          />
+                        </div>
+                        <div className="row">
+                          <button
+                            type="button"
+                            className="btn btn--primary"
+                            disabled={turnBusy || !turnAccountId.trim() || !turnApiToken.trim()}
+                            onClick={() => void handleTurnCreate()}
+                            title={t('turn.createTitle')}
+                          >
+                            {t('turn.create')}
+                          </button>
+                        </div>
+                        <p className="hint hint--dim">{t('turn.createHint')}</p>
+
+                        <details className="turn__manual">
+                          <summary>{t('turn.manualToggle')}</summary>
+                          <div className="turn__row">
+                            <input
+                              className="input"
+                              type="text"
+                              placeholder={t('turn.keyIdPlaceholder')}
+                              value={turnKeyIdInput}
+                              onChange={(e) => setTurnKeyIdInput(e.target.value)}
+                              disabled={turnBusy}
+                            />
+                            <input
+                              className="input"
+                              type="password"
+                              placeholder={t('turn.keySecretPlaceholder')}
+                              value={turnKeySecretInput}
+                              onChange={(e) => setTurnKeySecretInput(e.target.value)}
+                              disabled={turnBusy}
+                            />
+                          </div>
+                          <div className="row">
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={
+                                turnBusy || !turnKeyIdInput.trim() || !turnKeySecretInput.trim()
+                              }
+                              onClick={() => void handleTurnSaveManual()}
+                            >
+                              {t('turn.save')}
+                            </button>
+                          </div>
+                        </details>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
             </section>
@@ -2345,15 +2585,14 @@ function VideoTile({
 }: VideoTileProps) {
   const t = useI18n();
   const ref = useRef<HTMLVideoElement | null>(null);
-  const voiceRef = useRef<HTMLAudioElement | null>(null);
-  const appAudioRef = useRef<HTMLAudioElement | null>(null);
   const [hasFrames, setHasFrames] = useState(false);
 
   const voiceTrack = tracks?.voice ?? null;
   const appAudioTrack = tracks?.appAudio ?? null;
 
   /**
-   * 语音与应用声音**各接各的 `<audio>`，不混进 `<video>`**。
+   * 语音与应用声音**各接各的 `<audio>`，不混进 `<video>`**（播放器在下面的
+   * `RemoteAudioOutlet`）。这里只留一个判断：这个 tile 自己要不要恒静。
    *
    * 交给 `<video>` 一条整流就等于在播放层又把两条轨合成了一路，角色信息当场丢失，
    * 之后想单独静音 / 调音量只能回去猜下标 —— 那正是这轮改造要根除的东西。
@@ -2362,15 +2601,6 @@ function VideoTile({
    * 没有角色表时（本地预览，以及 ontrack 还没到的那一小段）退回老行为：
    * 由 `<video>` 直接播整条流，至少保证「听得见」。
    */
-  const roleAudio = voiceTrack !== null || appAudioTrack !== null;
-  const voiceStream = useMemo(
-    () => (voiceTrack ? new MediaStream([voiceTrack]) : null),
-    [voiceTrack],
-  );
-  const appAudioStream = useMemo(
-    () => (appAudioTrack ? new MediaStream([appAudioTrack]) : null),
-    [appAudioTrack],
-  );
 
   /**
    * 元素同时交给内部 ref 和外面（帧泵）。
@@ -2397,38 +2627,23 @@ function VideoTile({
     if (stream) void video.play().catch(() => undefined);
   }, [stream]);
 
-  // React 对 muted 的处理在部分版本里不会实时写回 DOM 属性，
-  // 静音状态又必须立刻生效，所以除了 JSX 也显式落一次。
-  //
-  // video 元素自身恒静的场景：本地预览（本机播自己的系统声音等于双份回声）、
-  // 有角色表（声音走下面两条 audio，不静就会同一路播两遍）、
-  // 或者两路都被用户静了。
-  // 没有角色表的那一小段退回老行为：video 直接播整条流，至少保证「听得见」。
+  /**
+   * 两条角色音轨的播放**不在这个组件里** —— 见文件末尾的 `RemoteAudioOutlet`。
+   *
+   * 曾经把 `<audio>` 挂在 tile 里，于是「声音」依赖「格子存在」：
+   * 浮窗只摆正在共享的那几格（`floatPeers` 按 `remoteSharing` 过滤），
+   * 而 `voice` 轨与 `sharing` 是**解耦**的（`stopShare` 明确不摘 voice），
+   * 于是「开着麦但没共享画面」的人在浮窗里**完全听不见** —— 而那正是
+   * 浮窗的主场景（边打游戏边听队友）。
+   *
+   * `<video>` 自己的静音仍归这里管：有没有角色音轨决定它要不要恒静
+   * （不静就会同一路播两遍）。
+   */
   const noRoleAudio = voiceTrack === null && appAudioTrack === null;
   const bothMuted = Boolean(audioPref && audioPref.voiceMuted && audioPref.appMuted);
   useEffect(() => {
     if (ref.current) ref.current.muted = self ? true : !noRoleAudio || bothMuted;
   }, [self, noRoleAudio, bothMuted]);
-
-  /**
-   * 两条角色音轨的绑定、静音与音量。
-   *
-   * 静音 / 音量只切 `<audio>` 的本机属性（不发信令）—— 语音与应用声音
-   ** 各自独立：关掉游戏声不影响队友说话，反过来也一样。
-   */
-  useEffect(() => {
-    const pairs: Array<[HTMLAudioElement | null, MediaStream | null, boolean, number]> = [
-      [voiceRef.current, voiceStream, audioPref?.voiceMuted ?? false, audioPref?.voiceVol ?? 1],
-      [appAudioRef.current, appAudioStream, audioPref?.appMuted ?? false, audioPref?.appVol ?? 1],
-    ];
-    for (const [el, nextStream, m, v] of pairs) {
-      if (!el) continue;
-      if (el.srcObject !== nextStream) el.srcObject = nextStream;
-      el.muted = m;
-      el.volume = v;
-      if (nextStream) void el.play().catch(() => undefined);
-    }
-  }, [voiceStream, appAudioStream, audioPref]);
 
   // 等真正解出画面再撤掉占位层，否则会出现「显示已连接但一片黑」
   const markFrames = useCallback(() => setHasFrames(true), []);
@@ -2449,8 +2664,8 @@ function VideoTile({
       title={onToggleFocus ? '双击放大 / 还原' : undefined}
     >
       {/*
-        有角色音轨时把 video 元素静掉，声音交给下面两条 audio —— 不静的话
-        同一路声音会被播两遍，听感上是一个极短的叠音。
+        有角色音轨时把 video 元素静掉，声音交给 `RemoteAudioOutlet` 的两条 audio
+        —— 不静的话同一路声音会被播两遍，听感上是一个极短的叠音。
       */}
       <video
         ref={attach}
@@ -2463,12 +2678,15 @@ function VideoTile({
       />
 
       {/*
-        两条角色音轨各用一个元素，刻意不合成一路：角色信息要一路保留到播放端，
-        否则「单独静音他的游戏声」这种事又得回去猜下标。
-        muted / volume 由上面的 effect 按分轨偏好实时落 DOM。
+        两条角色音轨**不在这个 tile 里** —— 播放器见文件末尾的 `RemoteAudioOutlet`。
+        音量控件仍留在这里：它是「谁的声音要调」的入口，与格子在不在无关；
+        而真正出声的元素必须在所有分支之外，否则浮窗会把它一起过滤掉。
       */}
-      {roleAudio && <audio ref={voiceRef} autoPlay playsInline />}
-      {roleAudio && <audio ref={appAudioRef} autoPlay playsInline />}
+      {/*
+        这里**曾经**挂两条 `<audio>`（语音 / 应用声音各一条）。
+        现在它们搬到了文件末尾的 `RemoteAudioOutlet` —— 按 peerId 渲染，
+        不再依附于「格子是否存在」。原因见 `RemoteAudioOutlet` 的注释。
+      */}
 
       {!hasFrames && (
         <div className="tile__placeholder">
@@ -2673,3 +2891,129 @@ function formatBitrate(bps: number): string {
   if (bps < 1_000_000) return `${Math.round(bps / 1000)} Kbps`;
   return `${(bps / 1_000_000).toFixed(2)} Mbps`;
 }
+
+/**
+ * 远端角色音轨的播放器 —— 语音与应用声音各一路，**按 peerId 渲染**。
+ *
+ * --- 为什么必须住在 tile 外面 ---
+ *
+ * 原来这两条 `<audio>` 挂在 `VideoTile` 里，于是「能不能听见」取决于
+ * 「格子在不在」。而这两件事是**解耦**的：
+ *
+ *   · 画面格子：浮窗下只摆**正在共享**的那几路（`floatPeers` 按 `remoteSharing` 过滤）
+ *   · 语音轨：与 `sharing` 无关（`stopShare` 明确只摘 video + appAudio，不摘 voice）
+ *
+ * 两者一拼，结论是：**开着麦但没共享画面的人，在浮窗里完全听不见。**
+ * 而「边打游戏边听队友」正是浮窗的主场景 —— 这是功能缺失，不是提示缺失。
+ *
+ * 常规模式为什么没暴露这个 bug：那里按**成员列表**渲染全部格子，
+ * 不看 `remoteSharing`，所以每人都有格子、都有播放器。浮窗是唯一会过滤的分支。
+ *
+ * --- 拆开之后要守住的三件事 ---
+ *
+ * 1. **一个 peer 一对元素，不因格子重挂而重建**。音量面板开关、放大/还原、
+ *    浮窗/常规切换都会让 tile 重新挂载；元素重建就会中断正在播的声音
+ *    （`srcObject` 重新赋值 ⇒ 重新走一遍缓冲）。所以这里以 `peerId` 为 key，
+ *    key 不变则元素不变。
+ * 2. **静音 / 音量只切本机属性**，不发信令 —— 与原先行为一致。
+ * 3. **没有轨道时元素不渲染**。`srcObject` 挂 null 是另一回事：
+ *    留着空元素会让人以为「有声音但听不到」。
+ */
+function RemoteAudioOutlet({
+  peers,
+  tracks,
+  prefOf,
+  remoteSharing,
+  selfPeerId,
+}: {
+  /** 房间里的远端成员（不含自己） */
+  peers: readonly PeerInfo[];
+  /** peerId → 三条轨 */
+  tracks: Record<string, RemoteTracks | undefined>;
+  /** 取某人的分轨音量偏好 */
+  prefOf: (peerId: string) => PeerAudioPref;
+  /** peerId → 此刻在不在共享画面。**只用于展示，不参与判据** */
+  remoteSharing: Record<string, boolean>;
+  /** 自己的 peerId */
+  selfPeerId: string | undefined;
+}) {
+  /**
+   * 「该给谁放声音」交给纯函数判据（`packages/shared/src/voice-audience.ts`），
+   * 不在这里 inline 过滤 —— 这个 bug 的形态就是「过滤条件写错」，
+   * 而过滤条件一旦摊进 JSX 就没人能独立验它。
+   */
+  const audience = remoteAudioAudience(
+    peers.map((peer) => ({
+      peerId: peer.peerId,
+      sharing: Boolean(remoteSharing[peer.peerId]),
+      tracks: tracks[peer.peerId] ?? null,
+    })),
+    selfPeerId ?? '',
+  );
+
+  return (
+    <>
+      {audience.map((peerId) => (
+        <RemoteAudioPair
+          key={peerId}
+          tracks={tracks[peerId] ?? null}
+          pref={prefOf(peerId)}
+        />
+      ))}
+    </>
+  );
+}
+
+/**
+ * 单个 peer 的两条角色音轨。
+ *
+ * 拆成独立组件是为了让 `key` 挂在 peerId 上：父组件重渲染时
+ * React 按 key 复用同一个实例，`<audio>` 元素因此不会被拆掉重建。
+ */
+function RemoteAudioPair({
+  tracks,
+  pref,
+}: {
+  tracks: RemoteTracks | null;
+  pref: PeerAudioPref;
+}) {
+  const voiceRef = useRef<HTMLAudioElement | null>(null);
+  const appAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const voiceTrack = tracks?.voice ?? null;
+  const appAudioTrack = tracks?.appAudio ?? null;
+  const voiceStream = useMemo(
+    () => (voiceTrack ? new MediaStream([voiceTrack]) : null),
+    [voiceTrack],
+  );
+  const appAudioStream = useMemo(
+    () => (appAudioTrack ? new MediaStream([appAudioTrack]) : null),
+    [appAudioTrack],
+  );
+
+  /**
+   * 轨道变化只换 `srcObject`，不新起元素 —— 元素是同一个，
+   * 所以换源期间不会把正在播的声音打断成一段空白。
+   */
+  useEffect(() => {
+    const pairs: Array<[HTMLAudioElement | null, MediaStream | null, boolean, number]> = [
+      [voiceRef.current, voiceStream, pref.voiceMuted, pref.voiceVol],
+      [appAudioRef.current, appAudioStream, pref.appMuted, pref.appVol],
+    ];
+    for (const [el, nextStream, muted, volume] of pairs) {
+      if (!el) continue;
+      if (el.srcObject !== nextStream) el.srcObject = nextStream;
+      el.muted = muted;
+      el.volume = volume;
+      if (nextStream) void el.play().catch(() => undefined);
+    }
+  }, [voiceStream, appAudioStream, pref]);
+
+  return (
+    <>
+      {voiceStream && <audio ref={voiceRef} autoPlay playsInline />}
+      {appAudioStream && <audio ref={appAudioRef} autoPlay playsInline />}
+    </>
+  );
+}
+

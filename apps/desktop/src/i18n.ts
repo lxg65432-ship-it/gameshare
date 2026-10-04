@@ -184,6 +184,37 @@ const ZH = {
   'float.emptyOnlyShared': '浮窗只摆正在共享的那几路。',
   'float.enterRoomHint': '进入房间后，这里显示其他玩家的画面。',
 
+  /* TURN 中继 */
+  'turn.title': 'TURN 中继（连不上时的兜底）',
+  'turn.stateOff': '未配置',
+  'turn.stateReady': '已就绪',
+  'turn.stateError': '签发失败',
+  'turn.issued': '· 本次签发 {n} 次',
+  'turn.fromEnv': '当前用的是环境变量里的凭据，它优先于这里配的。',
+  'turn.offHint':
+    '两端都在对称 NAT / CGNAT（校园网、公司内网、手机流量、部分家宽）时纯 P2P 必然连不通，需要中继兜底。',
+  'turn.configured': '已配置（Key ID {id}…）。下次启动自动生效，不用再填。',
+  'turn.clear': '清除本机凭据',
+  'turn.clearHint': '清除后回到纯 P2P。已发出的邀请不受影响。',
+  'turn.accountIdPlaceholder': 'Cloudflare 账号 ID',
+  'turn.accountIdTitle': '在 Cloudflare 控制台右侧可以直接看到这一串',
+  'turn.apiTokenPlaceholder': 'API Token（需 Calls Write 权限）',
+  'turn.apiTokenTitle':
+    '这个 token 能建/删你这个账号下的 TURN key，权限很大。程序只在建 key 时用一次，不保存。',
+  'turn.create': '自动开通',
+  'turn.createTitle': '调 Cloudflare API 建一个 TURN key，存到本机并立即启用',
+  'turn.createHint':
+    '会自动建一个 key 并存在本机，之后每次启动自动用同一组，不用再填。第一次要先去 Cloudflare 建一个 Calls Write 权限的 API Token。',
+  'turn.createFailed': '创建失败',
+  'turn.saveFailed': '保存失败',
+  'turn.manualToggle': '我已经有 Key ID / API Token 了，手工填',
+  'turn.keyIdPlaceholder': 'Turn Token ID',
+  'turn.keySecretPlaceholder': 'API Token（TURN key 的 secret）',
+  'turn.save': '保存并启用',
+  'turn.oneShotWarn':
+    'key 建出来了，但没能存到本机。下面这串只显示这一次——Cloudflare 只在创建时返回它，接口拿不回来。请立刻自己抄走。',
+  'turn.oneShotHint': '抄走之后可以在上面的「手工填」里再存一次。',
+
   /* 控制条 / 小球 */
   'bar.ballTitle': '单击展开控制条 · 按住可拖到别处',
   'bar.ballTiles': '{n} 个小窗',
@@ -401,6 +432,37 @@ const EN: Dict = {
   'float.emptyNoShare': 'Nobody is sharing yet.',
   'float.emptyOnlyShared': 'The overlay only shows actively shared streams.',
   'float.enterRoomHint': 'Join a room and other players\' screens will show up here.',
+
+  /* TURN relay */
+  'turn.title': 'TURN relay (fallback when P2P fails)',
+  'turn.stateOff': 'not configured',
+  'turn.stateReady': 'ready',
+  'turn.stateError': 'signing failed',
+  'turn.issued': '· issued {n}× this session',
+  'turn.fromEnv': 'Currently using the credentials from environment variables, which take priority.',
+  'turn.offHint':
+    'Pure P2P cannot connect when both ends sit behind symmetric NAT / CGNAT (campus network, office intranet, mobile data, some home broadband). A relay is the fallback.',
+  'turn.configured': 'Configured (Key ID {id}…). Reused automatically on next start — no need to fill it in again.',
+  'turn.clear': 'Clear local credentials',
+  'turn.clearHint': 'Back to pure P2P. Invitations already sent are unaffected.',
+  'turn.accountIdPlaceholder': 'Cloudflare account ID',
+  'turn.accountIdTitle': 'Shown on the right side of the Cloudflare dashboard',
+  'turn.apiTokenPlaceholder': 'API token (Calls Write permission)',
+  'turn.apiTokenTitle':
+    'This token can create and delete TURN keys on your account — treat it carefully. It is used once to create a key and never stored.',
+  'turn.create': 'Set up automatically',
+  'turn.createTitle': 'Call the Cloudflare API to create a TURN key, store it locally and enable it right away',
+  'turn.createHint':
+    'Creates a key, stores it on this machine, and reuses the same pair on every start. First you need an API token with Calls Write permission from Cloudflare.',
+  'turn.createFailed': 'Creation failed',
+  'turn.saveFailed': 'Save failed',
+  'turn.manualToggle': 'I already have a Key ID / API token — enter it manually',
+  'turn.keyIdPlaceholder': 'Turn Token ID',
+  'turn.keySecretPlaceholder': 'API token (the TURN key secret)',
+  'turn.save': 'Save and enable',
+  'turn.oneShotWarn':
+    'The key was created but could not be stored locally. The string below is shown only once — Cloudflare returns it only at creation and it cannot be fetched again. Copy it now.',
+  'turn.oneShotHint': 'After copying it, store it via the manual form above.',
 
   'bar.ballTitle': 'Click to expand the control bar · hold to drag',
   'bar.ballTiles': '{n} tiles',

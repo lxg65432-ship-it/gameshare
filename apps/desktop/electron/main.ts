@@ -8,6 +8,14 @@ import { registerClipboardHandlers } from './clipboard';
 import { EmbeddedSignalingServer } from './embedded-server';
 import { registerFloatTilesHandlers, setTilesHostWindow } from './float-tiles';
 import { TunnelManager } from './tunnel';
+import {
+  clearTurnCredentials,
+  createTurnKey,
+  loadTurnAccountId,
+  loadTurnCredentials,
+  maskKeyId,
+  saveTurnCredentials,
+} from './turn-config';
 import { registerWindowModeHandlers, setPrimaryWindow } from './window-mode';
 
 /**
@@ -36,14 +44,45 @@ const isDev = Boolean(DEV_SERVER_URL);
  * 代价是把信令的**全部**配置也一起解析了一遍，但 `loadConfig` 本身是纯函数、
  * 不碰端口不监听，多跑一次没有副作用。
  */
+/**
+ * TURN 中继凭据（M8）。
+ *
+ * 三级来源，**优先级从高到低**：
+ *
+ * 1. 环境变量 `TURN_KEY_ID` / `TURN_KEY_SECRET` —— 优先，且**不落盘**。
+ *    想临时换一组凭据、或者在别人机器上一次性用，走这条。
+ * 2. 本地存的 `userData/turn-credentials.json` —— 界面上配过一次之后一直有效。
+ *    这是「不用每次都设环境变量」那条需求的落点（见 turn-config.ts 文件头
+ *    对「为什么推翻原判断」的解释）。
+ * 3. 都没有 ⇒ 无 TURN，纯 P2P。**不报错、不阻塞建房**。
+ *
+ * 刻意**复用信令包的 `loadConfig()`** 读环境变量，而不是在这里再读一遍
+ * `TURN_KEY_ID` / `TURN_KEY_SECRET` —— 那两个变量名散在两处必然会漂（改了一处
+ * 忘了另一处，症状是「配了 TURN 却说没配」，而日志里什么都看不出来）。
+ *
+ * 代价是把信令的**全部**配置也一起解析了一遍，但 `loadConfig` 本身是纯函数、
+ * 不碰端口不监听，多跑一次没有副作用。
+ */
 function resolveTurnCredentials(): { keyId: string; keySecret: string } | null {
-  return loadConfig(process.env).turn;
+  const fromEnv = loadConfig(process.env).turn;
+  if (fromEnv) return fromEnv;
+  return loadTurnCredentials();
 }
 
 const embeddedServer = new EmbeddedSignalingServer({
   enabled: process.env.GAMESHARE_EMBEDDED_SERVER !== '0',
   turn: resolveTurnCredentials(),
 });
+
+/**
+ * 界面上改 TURN 配置后要重启信令才能生效 ——
+ * `EmbeddedSignalingServer` 的 `turn` 是**构造期**定下的（readonly），
+ * 换凭据等于换一台新的服务器。诚实地告诉用户「要重启」，
+ * 而不是让按钮点了没反应。
+ */
+function restartEmbeddedServerWithTurn(): void {
+  embeddedServer.updateTurn(resolveTurnCredentials());
+}
 
 /**
  * 异地访问用的 Cloudflare 隧道。
@@ -212,6 +251,78 @@ function registerEmbeddedServerHandlers(): void {
 
   ipcMain.handle('server:set-enabled', async (_event, enabled: unknown) => {
     return embeddedServer.setEnabled(enabled === true);
+  });
+
+  registerTurnHandlers();
+}
+
+/* ------------------------------------------------------------------ *
+ * TURN 凭据的界面配置
+ *
+ * ⚠️ **返回给渲染层的东西里永远不含 keySecret。** 界面只在
+ * 「刚建出来的那一下」显示一次原文（那一次也只在主进程内存里过一趟，
+ * 不进日志、不进剪贴板）。之后一律只有 uid 的前 6 位。
+ * ------------------------------------------------------------------ */
+
+function registerTurnHandlers(): void {
+  /** 界面看到的状态：有没有配、配的是什么。**刻意不含 secret** */
+  ipcMain.handle('turn:get', () => {
+    const creds = resolveTurnCredentials();
+    return {
+      configured: creds !== null,
+      keyIdMasked: creds ? maskKeyId(creds.keyId) : '',
+      /** 已存的 Cloudflare 账号 id，让用户下次换 key 不用重填 */
+      accountId: loadTurnAccountId(),
+      /** 凭据来自哪儿 —— 用户需要知道「为什么我改了环境变量却没生效」 */
+      source: loadConfig(process.env).turn ? 'env' : creds ? 'file' : 'none',
+      ...embeddedServer.status,
+    };
+  });
+
+  /**
+   * 用账号 token 建一个新的 TURN key，存盘并让信令重启。
+   *
+   * 账号 token **只在这一次调用里用掉，不落盘**（建完就没用了）——
+   * 与 keySecret 的处理刻意不同：keySecret 之后每次建房都要用。
+   */
+  ipcMain.handle('turn:create', async (_event, payload: unknown) => {
+    const { accountId, apiToken } = (payload ?? {}) as { accountId?: unknown; apiToken?: unknown };
+    const result = await createTurnKey(String(accountId ?? ''), String(apiToken ?? ''));
+    if (!result.ok || !result.keyId || !result.keySecret) {
+      return { ok: false, error: result.error ?? '创建失败' };
+    }
+    const saved = saveTurnCredentials({ keyId: result.keyId, keySecret: result.keySecret }, String(accountId ?? ''));
+    if (!saved) {
+      // 建出来了但没存住 —— 必须说清楚，否则用户以为配好了、这次能用、下次又没了
+      return {
+        ok: false,
+        error: 'key 已创建但**没能存到本地**（userData 写不进去）。本次可用，重启后会丢。',
+        keyIdMasked: maskKeyId(result.keyId),
+        keySecret: result.keySecret,
+      };
+    }
+    await restartEmbeddedServerWithTurn();
+    return { ok: true, keyIdMasked: maskKeyId(result.keyId), accountId: String(accountId ?? '') };
+  });
+
+  /** 手工填一对已有凭据（不走 Cloudflare API） */
+  ipcMain.handle('turn:save', async (_event, payload: unknown) => {
+    const { keyId, keySecret } = (payload ?? {}) as { keyId?: unknown; keySecret?: unknown };
+    const id = String(keyId ?? '').trim();
+    const secret = String(keySecret ?? '').trim();
+    // 成对校验：**只给一个按「没配」处理**，与信令 parseTurn 同一口径
+    if (!id || !secret) return { ok: false, error: 'Key ID 与 API Token 必须成对填写' };
+    if (!saveTurnCredentials({ keyId: id, keySecret: secret }, loadTurnAccountId())) {
+      return { ok: false, error: '写不进本地配置（userData 不可写）' };
+    }
+    await restartEmbeddedServerWithTurn();
+    return { ok: true, keyIdMasked: maskKeyId(id) };
+  });
+
+  ipcMain.handle('turn:clear', async () => {
+    const ok = clearTurnCredentials();
+    await restartEmbeddedServerWithTurn();
+    return { ok };
   });
 }
 

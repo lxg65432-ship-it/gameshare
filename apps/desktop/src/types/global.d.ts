@@ -116,6 +116,43 @@ export interface TunnelStatus {
 }
 
 /**
+ * TURN 配置在界面上的状态。**刻意不含 keySecret**。
+ *
+ * `source` 回答「我改了环境变量怎么没生效」：环境变量优先于本地文件，
+ * 所以设了变量又配了界面，凭据仍然是环境变量那一份。
+ */
+export interface TurnUiStatus {
+  configured: boolean;
+  /** key id 的前 6 位。**不是完整 id** */
+  keyIdMasked: string;
+  /** 已存的 Cloudflare 账号 id（可能为空串），让用户换 key 时不用重填 */
+  accountId: string;
+  source: 'env' | 'file' | 'none';
+  state: string;
+  turnState: 'off' | 'ready' | 'error';
+  turnIssued: number;
+  detail: string | null;
+}
+
+export interface TurnCreateResult {
+  ok: boolean;
+  error?: string;
+  keyIdMasked?: string;
+  accountId?: string;
+  /**
+   * **只在「建出来了但没存住」时出现。** Cloudflare 的 key 只在创建时
+   * 返回一次，接口拿不回来 —— 不展示就等于永远丢了。
+   */
+  keySecret?: string;
+}
+
+export interface TurnSaveResult {
+  ok: boolean;
+  error?: string;
+  keyIdMasked?: string;
+}
+
+/**
  * 浮窗模式状态。结构以 electron/window-mode.ts 为准，
  * 按本文件的一贯做法单独声明。
  */
@@ -234,6 +271,17 @@ export interface GameShareApi {
     getStatus(): Promise<TunnelStatus>;
     setEnabled(enabled: boolean): Promise<TunnelStatus>;
     onStatus(callback: (status: TunnelStatus) => void): () => void;
+  };
+  /**
+   * TURN 凭据配置。**返回类型里没有、也不会有 keySecret** ——
+   * 只有 `create` 在「建出来了但没存住」这一种情况下会带出明文，
+   * 因为 Cloudflare 的 key 只在创建时返回一次，接口拿不回来。
+   */
+  turn: {
+    get(): Promise<TurnUiStatus>;
+    create(accountId: string, apiToken: string): Promise<TurnCreateResult>;
+    save(keyId: string, keySecret: string): Promise<TurnSaveResult>;
+    clear(): Promise<{ ok: boolean }>;
   };
   windowMode: {
     getStatus(): Promise<FloatWindowStatus>;

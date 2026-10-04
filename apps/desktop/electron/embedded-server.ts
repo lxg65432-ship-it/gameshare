@@ -83,7 +83,12 @@ export interface EmbeddedServerOptions {
 
 export class EmbeddedSignalingServer {
   readonly #port: number;
-  readonly #turn: { keyId: string; keySecret: string } | null;
+  /**
+   * **不再 readonly**：界面上可以换凭据了，见 `updateTurn` 的说明。
+   * 原先 readonly 的理由是「凭据来自环境变量，要重启进程才会变」——
+   * 那个理由在有了界面入口之后已经不成立。
+   */
+  #turn: { keyId: string; keySecret: string } | null;
   #enabled: boolean;
   #handle: SignalingServerHandle | null = null;
   #status: EmbeddedServerStatus;
@@ -185,6 +190,28 @@ export class EmbeddedSignalingServer {
     return this.#status;
   }
 
+  /**
+   * 换掉 TURN 凭据，**必要时重启**以让它生效。
+   *
+   * `#turn` 原本是构造期定下的（readonly）—— 因为凭据来自环境变量，
+   * 而环境变量要重启进程才会变，所以「构造后不变」是自洽的。
+   * 现在凭据能在界面上改了，那份假设就不成立了：换凭据等于换一台服务器。
+   *
+   * 顺带说明为什么**不在运行中热换**：TURN 凭证由
+   * `TurnCredentialProvider` 在**建 ack 时**签发，已经发出去的 ack 改不了，
+   * 热换只会造成「同一个房间里两半人用新配置、一半人用旧配置」。
+   * 重启一次是唯一诚实的做法。
+   *
+   * 服务器本来就没在跑时只更新凭据、不启动 —— 免得用户只是存了个配置
+   * 就把服务拉起来了（起没起由界面上的开关决定，不该由「存了配置」决定）。
+   */
+  async updateTurn(turn: { keyId: string; keySecret: string } | null): Promise<EmbeddedServerStatus> {
+    this.#turn = turn;
+    if (this.#status.state !== 'running') return this.#refreshStatus();
+    await this.stop();
+    return this.start();
+  }
+
   #publish(
     state: EmbeddedServerState,
     port: number,
@@ -204,9 +231,11 @@ export class EmbeddedSignalingServer {
    *
    * 给「状态里某个字段变了但 state 没变」用 —— TURN 签发结果就是这样：
    * 它是懒触发的，启停全程都不变。
+   *
+   * 返回重发后的状态，好让 `updateTurn` 那种「只更新不启动」的路径直接回传。
    */
-  #refreshStatus(): void {
-    this.#publish(this.#status.state, this.#status.port, this.#status.detail);
+  #refreshStatus(): EmbeddedServerStatus {
+    return this.#publish(this.#status.state, this.#status.port, this.#status.detail);
   }
 
   #compose(

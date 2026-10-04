@@ -6,6 +6,44 @@ import type { FloatTilesStatus } from './float-tiles';
 import type { TunnelStatus } from './tunnel';
 import type { FloatWindowStatus } from './window-mode';
 
+/** 界面上看到的 TURN 配置状态。**刻意不含 keySecret** */
+export interface TurnUiStatus {
+  /** 有没有配（环境变量或本地文件任一来源） */
+  configured: boolean;
+  /** key id 的前 6 位。**不是完整 id** */
+  keyIdMasked: string;
+  /** 已存的 Cloudflare 账号 id（可能为空串） */
+  accountId: string;
+  /** 凭据来自哪儿：环境变量 / 本地文件 / 都没有 */
+  source: 'env' | 'file' | 'none';
+  /** 内置信令的状态，附带 turnState / turnIssued —— 界面要显示签发结果 */
+  state: string;
+  turnState: 'off' | 'ready' | 'error';
+  turnIssued: number;
+  detail: string | null;
+}
+
+/**
+ * 建 key 的结果。
+ *
+ * `keySecret` **只在「建出来了但没存住」这一种情况下出现** ——
+ * 那时必须让用户看到并自己留一份，否则重启就彻底丢了（Cloudflare
+ * 的 key 只在创建时返回一次，接口拿不回来）。
+ */
+export interface TurnCreateResult {
+  ok: boolean;
+  error?: string;
+  keyIdMasked?: string;
+  accountId?: string;
+  keySecret?: string;
+}
+
+export interface TurnSaveResult {
+  ok: boolean;
+  error?: string;
+  keyIdMasked?: string;
+}
+
 /**
  * 主进程 -> 渲染进程暴露的 API 面。
  *
@@ -151,6 +189,21 @@ const api = {
       ipcRenderer.on('server:status', handler);
       return () => ipcRenderer.off('server:status', handler);
     },
+  },
+  /**
+   * TURN 凭据配置。
+   *
+   * ⚠️ **这里的返回类型里没有、也不会有 keySecret** ——
+   * 主进程只在「刚建出来的那一下」把它交给界面显示一次，
+   * 之后连主进程自己都不再往外发。
+   */
+  turn: {
+    get: (): Promise<TurnUiStatus> => ipcRenderer.invoke('turn:get') as Promise<TurnUiStatus>,
+    create: (accountId: string, apiToken: string): Promise<TurnCreateResult> =>
+      ipcRenderer.invoke('turn:create', { accountId, apiToken }) as Promise<TurnCreateResult>,
+    save: (keyId: string, keySecret: string): Promise<TurnSaveResult> =>
+      ipcRenderer.invoke('turn:save', { keyId, keySecret }) as Promise<TurnSaveResult>,
+    clear: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('turn:clear') as Promise<{ ok: boolean }>,
   },
   tunnel: {
     getStatus: (): Promise<TunnelStatus> =>

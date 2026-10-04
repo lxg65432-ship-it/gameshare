@@ -251,28 +251,48 @@ panel and look for these two lines (the client's own log output is in Chinese):
 ### Enabling TURN
 
 Relay traffic goes through Cloudflare and is **billed by egress**
-($0.05/GB, with a 1,000 GB free tier). Everything still works without it — you
-just won't connect on the four network types listed above.
+($0.05/GB, the first 1,000 GB each month is free). Everything still works
+without it — you just won't connect on the four network types listed above.
 
-1. Create a TURN Server in the
-   [Cloudflare dashboard](https://dash.cloudflare.com/)
-   (Realtime → TURN Server → Create) and note the **Turn Token ID** and
-   **API Token**.
-2. Set two environment variables **on the machine that runs the client**
-   (Windows PowerShell):
+**Shortest path: two fields in the app (since 1.5.0)**
 
-   ```powershell
-   $env:TURN_KEY_ID     = "your Turn Token ID"
-   $env:TURN_KEY_SECRET = "your API Token"
-   ```
+1. Open the client → expand the "Local service" panel → find "TURN relay";
+2. Fill in two fields: your **Cloudflare account ID** (shown on the right of
+   the dashboard) and an **API token with the Calls Write permission**;
+3. Click "Set up automatically". The app calls Cloudflare's API to create a
+   TURN key, stores it on this machine, and **reuses the same pair on every
+   start — no need to fill it in again**.
 
-3. Launch the client from that window. **The client must be restarted after
-   setting these.**
+The API token is used for that one call and **never stored** (it serves no
+purpose afterwards). The TURN key secret *is* stored locally — it is a
+**billing credential**, so don't hand the config file to anyone.
 
-⚠️ **The secret is effectively a billing password.** Don't paste it into chats or
-commit it. Signaling has no authentication, so anyone who reads it can spend your
-quota on someone else's behalf — that's why it is only read from the environment,
-never from a config file.
+> **Only the machine hosting the room needs this.** Relaying goes through the
+> signaling server on the **host's** machine, which issues credentials to
+> everyone who joins. Guests fill in **nothing** and still get the relay.
+>
+> Which also means: **the host pays the relay traffic** for everyone who
+> connects.
+
+**Alternative: enter an existing key manually**
+
+Already created one in the dashboard? Expand "I already have a Key ID / API
+token" and fill in the **Turn Token ID** and the **API token** (the key secret).
+
+**Or: keep using environment variables (nothing written to disk)**
+
+```powershell
+$env:TURN_KEY_ID     = "your Turn Token ID"
+$env:TURN_KEY_SECRET = "your API Token"
+```
+
+Launch the client from that window. **Environment variables take priority over
+the in-app configuration** — use them when you want to swap credentials for one
+run without leaving them on disk.
+
+⚠️ Either way, **the secret is effectively a billing password**. Don't paste it
+into chats or commit it. Signaling has no authentication, so anyone who reads it
+can spend your quota on someone else's behalf.
 
 The log panel states whether TURN was available for a session; check that line
 first when a connection fails. Without TURN configured the app **does not error**

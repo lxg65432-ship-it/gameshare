@@ -197,22 +197,43 @@ npm run check:stun         # STUN 节点体检（Chromium 侧能否拿到 srflx�
 
 ### 怎么开 TURN
 
-TURN 的中继流量走 Cloudflare，**用量按出站流量计费**（$0.05/GB，有 1000 GB 免费额度）。
+TURN 的中继流量走 Cloudflare，**用量按出站流量计费**（$0.05/GB，每月前 1000 GB 免费）。
 不配也能用 —— 只是上表那四种环境会连不通。
 
-1. 在 [Cloudflare 控制台](https://dash.cloudflare.com/) 建一个 TURN Server
-   （Realtime → TURN Server → Create），拿到 **Turn Token ID** 与 **API Token**；
-2. 在**运行客户端的那台机器**上设两个环境变量（Windows PowerShell）：
+**最快的路：在客户端里点两下（1.5.0 起）**
 
-   ```powershell
-   $env:TURN_KEY_ID     = "你拿到的 Turn Token ID"
-   $env:TURN_KEY_SECRET = "你拿到的 API Token"
-   ```
+1. 打开客户端 → 展开「本地服务」面板 → 找到「TURN 中继」；
+2. 填两格：**Cloudflare 账号 ID**（控制台右侧直接能看到）和
+   一个 **Calls Write 权限的 API Token**；
+3. 点「自动开通」。程序会调 Cloudflare 的接口建一个 TURN key、存到本机，
+   **下次启动自动用同一组，不用再填**。
 
-3. 从这个窗口启动客户端。**环境变量设完必须重启客户端才生效**。
+建 key 用的那个 API Token **只在这一次调用里用掉、不保存**（建完就没用了）。
+但 TURN key 的 secret 会存在本机 —— 它是**计费凭据**，别把配置文件发给别人。
 
-⚠️ **secret 相当于计费密码**，别发到群里、别提交进仓库。信令本身没有鉴权，
-谁读到它就能拿你的额度替别人中继，所以它只从环境变量读、不落配置文件。
+> **只有开房那台机器需要配。** 中继走的是**开房那台**上的信令服务器，
+> 它签发凭证给所有连上来的人。客人**什么都不用填**，照样能用中继。
+>
+> 而这也意味着：**中继的流量费由开房的人出。** 你的朋友连上来时，
+> 走的是你的 Cloudflare 额度。
+
+**另一条路：手工填已有的 key**
+
+已经在控制台建过 TURN Server 的，点「我已经有 Key ID / API token 了」，
+填 `Turn Token ID` 与 `API Token`（即 key 的 secret）即可。
+
+**或者：还是用环境变量（不落盘）**
+
+```powershell
+$env:TURN_KEY_ID     = "你的 Turn Token ID"
+$env:TURN_KEY_SECRET = "你的 API Token"
+```
+
+从那个窗口启动客户端。**环境变量优先于界面上的配置** ——
+想临时换一组凭据、又不希望它留在磁盘上，就走这条。
+
+⚠️ 无论哪条路，**secret 相当于计费密码**，别发到群里、别提交进仓库。
+信令本身没有鉴权，谁读到它就能拿你的额度替别人中继。
 
 进房时日志里会明说本次有没有 TURN；连不上时先看这一行。
 不配置 TURN 时程序**不会报错**，只是纯 P2P（大多数人本来也不需要它）。
