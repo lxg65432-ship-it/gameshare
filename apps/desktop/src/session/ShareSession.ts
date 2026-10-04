@@ -5,7 +5,7 @@ import {
   type TrackRole,
   type TurnRelayPayload,
 } from '@game-share/protocol';
-import { DEFAULT_SIGNALING_URL, buildIceServers, type IceServerConfig } from '@game-share/shared';
+import { DEFAULT_SIGNALING_URL, buildIceServers, mergeWithTransportError, type IceServerConfig, type ServerReachability } from '@game-share/shared';
 
 import { CaptureError, CaptureManager } from '../media/CaptureManager';
 import { MicCapture, type MicSettings } from '../media/MicCapture';
@@ -17,6 +17,7 @@ import {
   SignalingError,
   type ConnectionState,
 } from '../signaling/SignalingClient';
+import { probeSignalingAddress } from '../signaling/probe';
 import type { AudioCaptureFailure, AudioCaptureMode } from '../types/global';
 
 /* ------------------------------------------------------------------ *
@@ -83,7 +84,24 @@ export interface PeerLinkState {
 }
 
 export interface SessionState {
-  connection: { state: ConnectionState; detail: string; rttMs: number | null };
+  connection: {
+    state: ConnectionState;
+    detail: string;
+    rttMs: number | null;
+    /**
+     * 断线时对「这个地址到底怎么了」的判别。
+     *
+     * 为什么要它而**不是让 UI 去匹配 detail 字符串**：文案会改，
+     * 匹配字符串的判断迟早失效（而且失效时是静默的 —— 按钮不出现，没人知道）。
+     * 判据是数据，UI 只按数据决定显示什么。
+     *
+     * `tunnel-gone` 是唯一需要主动出按钮的那个：客人必须「请对方重发邀请」，
+     * 主机必须「重开隧道」，两者的动作完全不同。
+     */
+    reach: ServerReachability;
+    /** 那个作废的地址是不是本机的隧道（决定提示说给谁听） */
+    isOwnTunnel: boolean;
+  };
   room: { roomCode: string; self: PeerInfo; peers: PeerInfo[] } | null;
   /** peerId -> 链路状态 */
   links: Record<string, PeerLinkState>;
@@ -152,7 +170,13 @@ export interface StartShareOptions {
 }
 
 const INITIAL_STATE: SessionState = {
-  connection: { state: 'idle', detail: '', rttMs: null },
+  connection: {
+    state: 'idle',
+    detail: '',
+    rttMs: null,
+    reach: 'unknown',
+    isOwnTunnel: false,
+  },
   room: null,
   links: {},
   remoteStreams: {},
@@ -251,6 +275,9 @@ export class ShareSession {
           connection: {
             state,
             detail: detail ?? '',
+            // 连上了就清掉上一轮的判据：留着会让界面对一个正常连接显示「请重发邀请」
+            reach: state === 'connected' ? 'unknown' : this.#state.connection.reach,
+            isOwnTunnel: state === 'connected' ? false : this.#state.connection.isOwnTunnel,
             // 断开后上一次的 RTT 已无意义，清掉避免 UI 显示陈旧数字
             rttMs: state === 'connected' ? this.#state.connection.rttMs : null,
           },
@@ -272,6 +299,18 @@ export class ShareSession {
         }
         // 连上之后允许下一次断开重新记一条，否则「断开→重连→再断开」会静默
         if (state === 'connected') this.#lastConnLog = '';
+
+        // 断开时补一次主动探测。
+        //
+        // `connect_error` 只有一句 `xhr poll error`，而「对方隧道重启了（地址作废）」与
+        // 「对方服务没起」共用这一句话，处置却完全相反。这里探一下那个地址现在
+        // 返回的是不是本应用，把区别做出来再交给用户。详见 shared/reachability.ts。
+        //
+        // **只在第一次失败时探**：Socket.IO 的 reconnection 是无限重试，
+        // 每轮都探一次等于对着一个已死的地址反复发请求。
+        if (state === 'disconnected' && this.#lastConnLog === '' && detail) {
+          void this.#diagnoseUnreachable(detail);
+        }
       }),
 
       this.signaling.on('error', (err) => {
@@ -324,6 +363,44 @@ export class ShareSession {
   }
 
   /* ---------------- 连接与房间 ---------------- */
+
+  /**
+   * 探测连不上的那个地址，把「地址作废」与「连不上」区分开，再更新提示。
+   *
+   * **只更新界面，不额外写日志**：调用点已经记过一条断开了，
+   * 这里再记一条会把原因重复一遍（而日志面板默认收起，用户多半看不见）。
+   * 真正的价值在界面上那行提示 —— 它现在会直接说「请让他重发邀请」。
+   */
+  async #diagnoseUnreachable(transportHint: string): Promise<void> {
+    // 换地址了就别再探上一次那个 —— 那已经不是用户在等的地址了
+    const url = this.#serverUrl;
+    const reach = await probeSignalingAddress(url);
+
+    // 探测期间用户可能已经断开或换了地址 ⇒ 丢弃这次结论，
+    // 否则会把「上一个地址的诊断」写到「当前地址」的界面上。
+    if (this.#serverUrl !== url) return;
+
+    // 「这是不是我自己的隧道」：本机隧道开着时它的地址就是权威答案。
+    // 判错的后果很具体 —— 客人会被叫去开隧道，而那毫无意义。
+    const ownTunnel = window.gameShare?.tunnel
+      ? (await window.gameShare.tunnel.getStatus()).url
+      : null;
+    const isOwnTunnel = ownTunnel !== null && ownTunnel === url;
+
+    const detail = mergeWithTransportError(transportHint, reach, url, { isOwnTunnel });
+    this.#patch({
+      connection: { ...this.#state.connection, detail, reach, isOwnTunnel },
+    });
+
+    // 隧道作废这件事值得单独进日志：用户回头排查时它是关键时间点
+    if (reach === 'tunnel-gone') {
+      this.pushLog(
+        isOwnTunnel
+          ? '隧道地址已失效（Cloudflare 每次重启都会换地址）—— 之前发出的邀请需要重发'
+          : '对方的隧道地址已失效 —— 需要请他重发一次邀请',
+      );
+    }
+  }
 
   connect(url?: string): void {
     this.#serverUrl = url?.trim() || DEFAULT_SIGNALING_URL;

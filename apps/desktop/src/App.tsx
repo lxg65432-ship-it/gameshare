@@ -1501,6 +1501,32 @@ export default function App() {
             )}
 
             {connection.detail && <p className="hint hint--warn">{connection.detail}</p>}
+
+            {/* 隧道作废是唯一「光看提示不够」的情况：必须有一个能按的按钮。
+                文字已经说清了要做什么，但客人要联系的是「对方」——
+                给他一个「重试连接」按钮只会让他反复点，而那永远不会有变化。
+                主机这边则相反：重开隧道是他自己能立刻做的。 */}
+            {connection.reach === 'tunnel-gone' && connection.isOwnTunnel && (
+              <div className="row">
+                <button
+                  type="button"
+                  className="btn btn--primary btn--tiny"
+                  disabled={tunnelBusy || !tunnel?.available}
+                  onClick={() => void handleToggleTunnel(false).then(() => handleToggleTunnel(true))}
+                >
+                  {tunnelBusy ? '正在重建…' : '重开隧道'}
+                </button>
+                {/* 刻意不写「并复制新邀请」：地址是重启**之后**才拿到的，
+                    那一刻还没有新邀请可复制。按钮名必须只承诺它真做得到的事。 */}
+                <span className="hint hint--dim">重开后地址会变，请把新邀请重新发给对方</span>
+              </div>
+            )}
+
+            {connection.reach === 'tunnel-gone' && !connection.isOwnTunnel && (
+              <p className="hint hint--dim">
+                这是对方那边的问题：让他重开隧道再发一次邀请。你这边不用改任何设置。
+              </p>
+            )}
           </section>
 
           {/* ---- 本机信令 + 异地访问：合成一条状态栏，默认收起 ---- */}

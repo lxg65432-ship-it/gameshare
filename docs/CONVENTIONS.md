@@ -326,6 +326,8 @@
 | ICE 重开全部试完仍不通 | 两端都在对称 NAT / CGNAT。这是**本来就通不了**，重试无用 —— 日志会明说「判定为真不通」，只能靠 TURN（M8 已实现但**需自己配**，见 §6.5）或让受限端挂放行 UDP 的 VPN | §6.3 |
 | ICE 重开时日志里对方那边一声不吭 | 重开**只能由主动方发起**（协商只由主动方做）。被动方调 `restartIce()` 只会留下一个永远等不到 `createOffer` 的脏标记，所以它连调都不调 | §6.3 |
 | 明明配了 TURN，日志却说「本次按纯 P2P」 | `TURN_KEY_ID` / `TURN_KEY_SECRET` 没成对设进**运行客户端的那个进程**的环境变量。设完要重启客户端 | §6.5 |
+| 客人粘贴邀请后一直 `xhr poll error` | 多半是**隧道地址作废**（quick tunnel 每次重启换地址）。程序会主动探测并区分「地址失效」与「服务没起」：看到「请让他重发邀请」就是前者。仍显示「连不上」则是后者（要开服务） | §6.6 |
+| 界面只说「连不上」，不说是地址失效还是服务没起 | 判据退化成了 `unknown`：多半是响应里没有服务标识 `game-share-signaling`。核对 signaling-server 的 `/health` 是否还带 `service` 字段 | §6.6 |
 | 配了 TURN 但企业网里仍然连不通 | 大概率是端口被误杀：过滤端口 53 时**不能**用 `includes(':53')`，它会连 `:5349`（TLS）一起干掉，那恰是唯一能穿企业防火墙的路 | §6.5 |
 | ICE 候选里有 relay，但画质/延迟明显变差 | 正常现象：relay 意味着流量绕到 Cloudflare 边缘一圈。优先优化直连（关 VPN、换网络）而不是换 TURN | §6.5 |
 | 日志里「host×1 srflx×1」打了两遍 | `LinkDiagnosis.candidates` 被塞进了 `detail` 又单独插了一次。候选构成是**判据本身**（有没有 srflx/relay 决定 `needs-turn` 还是 `needs-stun`），必须有独立字段，不能当补充说明 | §6.4 |
@@ -376,6 +378,7 @@
 | 类型全归 `packages/protocol`，workspace 直接引 TS 源码 | `exports` → `./src/index.ts`，不走构建产物 |
 | 停止共享**必须**发 `setSharing(false)` | `stopShare` 一律通知对端；**换源不走它**（由 `startShare` 静默停旧源），否则面板闪一帧「未共享」 |
 | 加入失败的错**必须在界面上看得见** | 2026-09-18 补（原先是 M3 待办）：满员 / 房间不存在现在渲染成「加入失败：…」提示条；新加的报错入口别只 `pushLog` —— 日志面板默认收起，用户看到的是「点了没反应」 |
+| 改 `/health` 的 `service` 字段要同步 `SIGNALING_SERVICE_ID` | 判据认这个标识来分辨「对面是不是本应用」（`shared/reachability.ts`）。改了服务端而没改判据 ⇒ 功能**静默失效**（永远返回 unknown），`check:reachability` 会红 |
 | TURN 的 `TURN_KEY_ID` / `TURN_KEY_SECRET` **只从环境变量读** | secret 是**计费凭据**，而信令无鉴权（见下条）。存文件 / 做输入框都意味着它会被拷走。解析统一走信令包的 `loadConfig()`，别在别处再读一遍这两个变量名 |
 | 改了 `buildIceServers` 的签名要同步 `check:turn` | 它在端到端那节直接调这个函数。**协议层 `TurnRelayPayload` 与运行时 `IceServerConfig` 是两个类型**（前者多一个 `expiresAt`），中间那次显式转换漏字段的话，`credentialType` 到客户端就成了 undefined |
 | 音频 device id 只有 `electron/audio/device-ids.ts` 一处产地 | 这几个字符串是**透传**给 Chromium 的，写错没有编译期提示，只有一句「采集失败」 |
@@ -397,6 +400,7 @@
 | **打包后**验证内置信令 | `npm run check:embedded` |
 | 验证独立部署的信令产物（必须 CJS） | `npm run check:standalone` |
 | 验证 TURN 凭证签发与端口过滤 | `npm run check:turn` |
+| 验证信令地址可用性判据（含旧隧道邀请失效） | `npm run check:reachability` |
 | 验证置顶能否压住全屏窗口 | `npm run check:topmost` |
 | 验证浮窗拆分模式（小窗 / 帧泵） | `npm run check:tiles` |
 | 验证应用级音频捕获（四模式 / 进程树 / 产物里的 koffi） | `npm run check:app-audio` |
