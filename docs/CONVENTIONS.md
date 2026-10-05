@@ -334,6 +334,11 @@
 | 配了 TURN 但企业网里仍然连不通 | 大概率是端口被误杀：过滤端口 53 时**不能**用 `includes(':53')`，它会连 `:5349`（TLS）一起干掉，那恰是唯一能穿企业防火墙的路 | §6.5 |
 | ICE 候选里有 relay，但画质/延迟明显变差 | 正常现象：relay 意味着流量绕到 Cloudflare 边缘一圈。优先优化直连（关 VPN、换网络）而不是换 TURN | §6.5 |
 | 日志里「host×1 srflx×1」打了两遍 | `LinkDiagnosis.candidates` 被塞进了 `detail` 又单独插了一次。候选构成是**判据本身**（有没有 srflx/relay 决定 `needs-turn` 还是 `needs-stun`），必须有独立字段，不能当补充说明 | §6.4 |
+| 建 TURN key 报「Cloudflare 接口形状可能变了」，可 key 明明建成功了 | **文档写 `result.key`，真响应是 `result.secret`**（2026-10-05 实测）。只看 `key` 会把成功报成失败。已用 `firstNonEmptyString(secret, key)` 兼容 | §6.5 |
+| 建 TURN key 报 `Could not route to /client/v4/accounts/…` | **账号 ID 填成了登录邮箱**。那串是 32 位十六进制（`dash.cloudflare.com/` 后面那串）。网关不认这个对象时返回 HTML 错误页而非 JSON ⇒ **请求压根没进 API，权限还没被检查**，别去折腾 token 权限 | §6.5 |
+| TURN 面板绿灯「已就绪」，但连不上时报 401 | **绿灯只验「读到一对非空字符串」**。最常见是把 **Cloudflare 账号 API Token**（`cfut_…`）填进了 Key Secret 格 —— 格式完全不同。现已加 `inspectTurnFormat`，格式不对当场亮红灯并点名是哪个格子（`turn:save` 直接拒、存好的在 `turn:get` 里报出） | §6.5 |
+| 明明配了 TURN，界面却说「凭据格式不对」 | 两条 token 混了：**建 key 用的账号 token**（一次性，不落盘）vs **中继用的 Key Secret**（64 位十六进制，每次建房都要用）。占位符文案已改掉「API token」这个叫法（它本身就是 2026-10-05 填错格的根源） | §6.5 |
+| 面板显示「已就绪」，能不能当作 TURN 可用？ | **不能**。那只代表凭据读到了、格式也对。真的通了要看到两样：日志里 `TURN 凭证已签发`（凭证这条路通）+ ICE 候选构成里有 `relay`（真中继）。**只有 `srflx` 不算** | §6.5 |
 
 ### 2.1 断链自愈相关的验收坑
 
@@ -384,12 +389,15 @@
 | 改 `/health` 的 `service` 字段要同步 `SIGNALING_SERVICE_ID` | 判据认这个标识来分辨「对面是不是本应用」（`shared/reachability.ts`）。改了服务端而没改判据 ⇒ 功能**静默失效**（永远返回 unknown），`check:reachability` 会红 |
 | TURN 凭据三级来源：**环境变量 > `userData` 下的 `turn-credentials.json` > 无** | 1.5.0 起允许界面配置了（`turn-store.ts`），但**环境变量仍优先** —— 想临时换一组凭据、不想留痕就走这条。两条都要，成对出现，只给一个按「没配」处理 |
 | TURN 的 secret **可以**落盘了（推翻原判断） | 原判断是「只从环境变量读」，理由是 secret 是计费凭据。现在推翻是因为「要用 TURN 得先开 PowerShell 设变量」，而 TURN 恰是**网络最差那批人**才需要的。防护做在明处：`userData` 下（`%APPDATA%`，默认只有当前用户可读）、界面只在建出来那一瞬显示一次、之后 `maskKeyId` 只给前 6 位、**`turn:get` 返回体永不含 secret**。⚠️ 这是「更方便」不是「更安全」 |
-| 建 key 的**账号 token 用完即弃、不落盘** | 它的权限比 key secret 大得多（能建/删这个账号下所有 TURN key），而建完 key 就没用了；key secret 反之，每次建房都要用。两者处理**刻意不同** |
+| 建 key 的**账号 token 用完即弃、不落盘** | 它的权限比 key secret 大得多（能建/删这个账号下所有 TURN key），而建完 key 就没用了；key secret 反之，每次建房都要用。两者处理**刻意不同**，界面上也**不许用「API token」这个词指代 secret**（2026-10-05 填错格的根源就是那句文案） |
+| 建 key 的响应**字段名以实测为准：文档写 `key`，真响应是 `secret`** | 只读 `key` ⇒ **key 建成功了却报「接口形状可能变了」**，是个把成功报成失败的洞（用户会误以为自己 token 权限不够，去反复重建 token）。用 `firstNonEmptyString(secret, key)` 兼容两者，**别「顺手清理」成只读一个** |
 | **只有信令所在那台机器需要配 TURN，不是「谁是房主」** | TURN 凭证是信令在 create/join 的 ack 里签发的，而每台客户端都起着内置信令。配了那台 ⇒ 全场所有链路（含 a↔c 这种跟房主没关系的）都受益，**客人零操作**。流量费由开房的人出 |
 | 远端 `<audio>` 播放器**必须住在 tile 外面** | 挂在 tile 里 ⇒「能不能听见」被绑死在「格子在不在」上。而浮窗只摆**正在共享**的格子、`voice` 轨却与 `sharing` 解耦 ⇒ **开麦但没共享的人浮窗里听不见**（2026-10-04 修的真 bug）。常规模式按成员列表渲染全部格子，所以只有浮窗用户中招。判据在 `shared/voice-audience.ts`，**别把 `sharing` 掺进去** |
 | 改了 `buildIceServers` 的签名要同步 `check:turn` | 它在端到端那节直接调这个函数。**协议层 `TurnRelayPayload` 与运行时 `IceServerConfig` 是两个类型**（前者多一个 `expiresAt`），中间那次显式转换漏字段的话，`credentialType` 到客户端就成了 undefined |
 | **判据文件不许 import `electron`** | 本机 `ELECTRON_RUN_AS_NODE` 是预设的，electron 包在纯 node 下 import 就炸 ⇒ 判据跑不起来 = 没有判据。所以 `turn-store.ts`（纯逻辑，可跑）与 `turn-config.ts`（要 `app.getPath`）必须分开 |
 | 音频 device id 只有 `electron/audio/device-ids.ts` 一处产地 | 这几个字符串是**透传**给 Chromium 的，写错没有编译期提示，只有一句「采集失败」 |
+| **凭据格式体检（`inspectTurnFormat`）只拒「确定的错」** | 「确定」= 邮箱填进 keyId、账号 token 填进 keySecret（各有一种可判的形状）。**长度/字符不符只标 `suspect`（黄灯、仍放行）** —— Cloudflare 若改了格式我们会误报，误报会把用户挡在门外，比漏报更糟 |
+| 改了 TURN 的界面文案要同步 `check-turn-ui` 最后一节 | 那节断言**「文案不许再把 secret 叫 API Token」**。这类文案是病因的一部分（不是症状），静态断言守得住 |
 | 音频解析失败**不许静默降级** | 换成普通 loopback 会把自己播的远端语音采回去 → 双向啸叫；「有声音」≠「做对了」 |
 | koffi **不放进 `dependencies`** | 进了就会同时踩 `npmRebuild: false` 与「`apps/desktop` 依赖保持为空」两条约定；它靠 extraResources 落地 |
 

@@ -196,8 +196,14 @@ const ZH = {
   'turn.configured': '已配置（Key ID {id}…）。下次启动自动生效，不用再填。',
   'turn.clear': '清除本机凭据',
   'turn.clearHint': '清除后回到纯 P2P。已发出的邀请不受影响。',
+  /**
+   * 格式不对时的状态名。**与「已就绪」用不同的词** ——
+   * 「已就绪」暗示配好了，而实测过绿灯 + 一对废凭据的组合。
+   */
+  'turn.stateBadFormat': '凭据格式不对',
   'turn.accountIdPlaceholder': 'Cloudflare 账号 ID',
-  'turn.accountIdTitle': '在 Cloudflare 控制台右侧可以直接看到这一串',
+  'turn.accountIdTitle':
+    '32 位十六进制。控制台网址里 dash.cloudflare.com/ 后面那一串，或右侧栏直接能看到',
   'turn.apiTokenPlaceholder': 'API Token（需 Calls Write 权限）',
   'turn.apiTokenTitle':
     '这个 token 能建/删你这个账号下的 TURN key，权限很大。程序只在建 key 时用一次，不保存。',
@@ -207,9 +213,15 @@ const ZH = {
     '会自动建一个 key 并存在本机，之后每次启动自动用同一组，不用再填。第一次要先去 Cloudflare 建一个 Calls Write 权限的 API Token。',
   'turn.createFailed': '创建失败',
   'turn.saveFailed': '保存失败',
-  'turn.manualToggle': '我已经有 Key ID / API Token 了，手工填',
-  'turn.keyIdPlaceholder': 'Turn Token ID',
-  'turn.keySecretPlaceholder': 'API Token（TURN key 的 secret）',
+  /**
+   * ⚠️ 下面三条**刻意不再用「API Token」这个词**指代 TURN key 的 secret。
+   * 2026-10-05 踩过：原文写「API Token（TURN key 的 secret）」，
+   * 用户据此把 **Cloudflare 账号 token**（`cfut_…`）填进了 secret 格，
+   * 界面照样绿灯「已就绪」，直到连不上才暴露成 401。**文案本身就是填错的源头。**
+   */
+  'turn.manualToggle': '我已经有 TURN key 了，手工填',
+  'turn.keyIdPlaceholder': 'TURN Key ID（32 位十六进制）',
+  'turn.keySecretPlaceholder': 'TURN Key Secret（64 位十六进制）',
   'turn.save': '保存并启用',
   'turn.oneShotWarn':
     'key 建出来了，但没能存到本机。下面这串只显示这一次——Cloudflare 只在创建时返回它，接口拿不回来。请立刻自己抄走。',
@@ -445,8 +457,10 @@ const EN: Dict = {
   'turn.configured': 'Configured (Key ID {id}…). Reused automatically on next start — no need to fill it in again.',
   'turn.clear': 'Clear local credentials',
   'turn.clearHint': 'Back to pure P2P. Invitations already sent are unaffected.',
+  'turn.stateBadFormat': 'credential format is wrong',
   'turn.accountIdPlaceholder': 'Cloudflare account ID',
-  'turn.accountIdTitle': 'Shown on the right side of the Cloudflare dashboard',
+  'turn.accountIdTitle':
+    '32 hex characters — the string after dash.cloudflare.com/ in the dashboard URL, also shown in the right sidebar',
   'turn.apiTokenPlaceholder': 'API token (Calls Write permission)',
   'turn.apiTokenTitle':
     'This token can create and delete TURN keys on your account — treat it carefully. It is used once to create a key and never stored.',
@@ -456,9 +470,9 @@ const EN: Dict = {
     'Creates a key, stores it on this machine, and reuses the same pair on every start. First you need an API token with Calls Write permission from Cloudflare.',
   'turn.createFailed': 'Creation failed',
   'turn.saveFailed': 'Save failed',
-  'turn.manualToggle': 'I already have a Key ID / API token — enter it manually',
-  'turn.keyIdPlaceholder': 'Turn Token ID',
-  'turn.keySecretPlaceholder': 'API token (the TURN key secret)',
+  'turn.manualToggle': 'I already have a TURN key — enter it manually',
+  'turn.keyIdPlaceholder': 'TURN Key ID (32 hex chars)',
+  'turn.keySecretPlaceholder': 'TURN Key Secret (64 hex chars)',
   'turn.save': 'Save and enable',
   'turn.oneShotWarn':
     'The key was created but could not be stored locally. The string below is shown only once — Cloudflare returns it only at creation and it cannot be fetched again. Copy it now.',

@@ -197,14 +197,13 @@ npm run check:stun         # STUN 节点体检（Chromium 侧能否拿到 srflx�
 
 ### 怎么开 TURN
 
-TURN 的中继流量走 Cloudflare，**用量按出站流量计费**（$0.05/GB，每月前 1000 GB 免费）。
-不配也能用 —— 只是上表那四种环境会连不通。
+TURN 的中继流量走 Cloudflare，**用量按出站流量计费**（$0.05/GB，每月前 1000 GB 免费，
+TURN 与 SFU 共用这一个额度；STUN 免费无限量）。不配也能用 —— 只是上表那四种环境会连不通。
 
 **最快的路：在客户端里点两下（1.5.0 起）**
 
 1. 打开客户端 → 展开「本地服务」面板 → 找到「TURN 中继」；
-2. 填两格：**Cloudflare 账号 ID**（控制台右侧直接能看到）和
-   一个 **Calls Write 权限的 API Token**；
+2. 填两格：**Cloudflare 账号 ID** 和一个 **Calls Write 权限的 API Token**；
 3. 点「自动开通」。程序会调 Cloudflare 的接口建一个 TURN key、存到本机，
    **下次启动自动用同一组，不用再填**。
 
@@ -217,16 +216,46 @@ TURN 的中继流量走 Cloudflare，**用量按出站流量计费**（$0.05/GB�
 > 而这也意味着：**中继的流量费由开房的人出。** 你的朋友连上来时，
 > 走的是你的 Cloudflare 额度。
 
+#### 两个参数分别是什么、在哪拿
+
+⚠️ **这里有三个东西都叫「token / ID」，别搞混** —— 填错格子的症状是
+「界面显示已就绪，但连不上时报 401 或 404」，很难往回找。
+
+| 界面上的格 | 是什么 | 长什么样 | 在哪拿 |
+|---|---|---|---|
+| **Cloudflare 账号 ID** | 账号标识，**只用于调管理 API** | **32 位十六进制** | 控制台网址里 `dash.cloudflare.com/` 后面那一串；或右侧栏。**不是登录邮箱** —— 填邮箱会让网关找不到对象（404） |
+| **API Token**（建 key 用） | 账号级凭据，**只能建/删 TURN key** | 一串随机字符（`cfut_…` 之类） | 控制台右上头像 → 我的个人资料 → **API 令牌** → 创建自定义令牌。权限三列依次选 `账户` / `Cloudflare Calls` / `编辑`；下方「账户资源」要 Include 你自己的账号；**「客户端 IP 地址筛选」留空**；TTL 留空 |
+| **TURN Key ID** | 建出来的那个 key 的 id（响应里的 `uid`） | **32 位十六进制** | 建 key 的响应里，或 Cloudflare 控制台的 TURN 页面 |
+| **TURN Key Secret** | 中继用的长期凭据（响应里的 **`secret`**） | **64 位十六进制** | 同上，**只在创建时返回一次**，之后接口查不回来 |
+
+**⚠️ 建 key 的 API Token 和 TURN Key Secret 完全不是一回事**：
+前者是「进门的临时通行证」（用一次就丢），后者是「中继的账号密码」（每次建房都要用）。
+把它们填反是最常见的错误 —— 程序现在会当场拦住并说清是哪个格子。
+
+**手工拿这两串（不用客户端自动开通）**
+
+在 PowerShell 里跑（PowerShell 里 `\` **不是**续行符，要写单行；`curl` 要写成 `curl.exe`）：
+
+```powershell
+curl.exe -X POST "https://api.cloudflare.com/client/v4/accounts/<你的32位账号ID>/calls/turn_keys" -H "Authorization: Bearer <你的API Token>" -H "Content-Type: application/json" -d '{\"name\":\"gameshare\"}'
+```
+
+返回里 `result.uid` → **TURN Key ID**，`result.secret` → **TURN Key Secret**。
+（字段名以实测为准：官方文档写的是 `key`，真实返回是 `secret`。）
+
+> 抄到之后**回 Cloudflare 把那个 API Token 删掉** —— 它的唯一用途是建 key，
+> 而程序运行时只认 TURN Key ID + Secret。留着等于给出去一个能删你所有 key 的入口。
+
 **另一条路：手工填已有的 key**
 
-已经在控制台建过 TURN Server 的，点「我已经有 Key ID / API token 了」，
-填 `Turn Token ID` 与 `API Token`（即 key 的 secret）即可。
+已经在控制台建过 TURN key 的，点「我已经有 TURN key 了，手工填」，
+填 `TURN Key ID（32 位十六进制）` 与 `TURN Key Secret（64 位十六进制）`。
 
 **或者：还是用环境变量（不落盘）**
 
 ```powershell
-$env:TURN_KEY_ID     = "你的 Turn Token ID"
-$env:TURN_KEY_SECRET = "你的 API Token"
+$env:TURN_KEY_ID     = "TURN Key ID（32 位十六进制）"
+$env:TURN_KEY_SECRET = "TURN Key Secret（64 位十六进制）"
 ```
 
 从那个窗口启动客户端。**环境变量优先于界面上的配置** ——
@@ -237,6 +266,16 @@ $env:TURN_KEY_SECRET = "你的 API Token"
 
 进房时日志里会明说本次有没有 TURN；连不上时先看这一行。
 不配置 TURN 时程序**不会报错**，只是纯 P2P（大多数人本来也不需要它）。
+
+**怎么知道 TURN 真的在用**：面板上「已就绪」只代表凭据读到了、格式也对，
+**不代表链路通了**。要在两端都不利的网络下试，然后看日志里有没有
+`TURN 凭证已签发`（凭证这条路通）和 ICE 候选构成里的 `relay`（**真走上中继**了）。
+只有 `srflx` 不算 —— 那说明还是直连。
+
+**已知限制**：单条中继链路有 Cloudflare 侧的速率上限（unique IP >5/s、5~10 kpps、
+50~100 Mbps）；公司防火墙若拦 TURN，需放行 `2a06:98c1:3200::1`、`2606:4700:48::1`、
+`141.101.90.1`、`162.159.207.1`。TURN 节点在 China Network 之外，国内能连但延迟更高。
+
 
 ## 已知限制
 

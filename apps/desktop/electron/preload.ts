@@ -21,6 +21,15 @@ export interface TurnUiStatus {
   turnState: 'off' | 'ready' | 'error';
   turnIssued: number;
   detail: string | null;
+  /**
+   * 格式问题（2026-10-05 补）。空数组 = 形状都对。
+   *
+   * ⚠️ **只有消息，没有原值** —— 这个返回体会进渲染层，
+   * 而渲染层可能被截图/录屏带走，secret 绝不能出现在那里。
+   */
+  formatIssues: Array<{ field: 'keyId' | 'keySecret'; message: string; suspect: boolean }>;
+  /** 有没有「确定的错」。界面据此把绿灯压成红灯（`suspect` 的不算）。 */
+  formatHard: boolean;
 }
 
 /**
@@ -42,6 +51,14 @@ export interface TurnSaveResult {
   ok: boolean;
   error?: string;
   keyIdMasked?: string;
+  /**
+   * 「形状可疑但已存」的提示（2026-10-05）。
+   *
+   * 主进程只拒**确定的错**（邮箱、把账号 token 填进 secret 格），
+   * 其余放行但把话说出来 —— 误报会让用户不敢用真凭据。
+   * 与 `error` 分开是因为一个拦、一个不拦。
+   */
+  warning?: string;
 }
 
 /**

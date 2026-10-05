@@ -11,6 +11,8 @@ import { TunnelManager } from './tunnel';
 import {
   clearTurnCredentials,
   createTurnKey,
+  hasHardFormatIssue,
+  inspectTurnFormat,
   loadTurnAccountId,
   loadTurnCredentials,
   maskKeyId,
@@ -268,6 +270,9 @@ function registerTurnHandlers(): void {
   /** 界面看到的状态：有没有配、配的是什么。**刻意不含 secret** */
   ipcMain.handle('turn:get', () => {
     const creds = resolveTurnCredentials();
+    // 格式体检：让「填错了」在界面上当场可见，而不是等到真连不上
+    // （2026-10-05 踩过：API Token 填进 secret 格，界面照样绿灯，病因完全看不见）
+    const formatIssues = inspectTurnFormat(creds);
     return {
       configured: creds !== null,
       keyIdMasked: creds ? maskKeyId(creds.keyId) : '',
@@ -275,6 +280,12 @@ function registerTurnHandlers(): void {
       accountId: loadTurnAccountId(),
       /** 凭据来自哪儿 —— 用户需要知道「为什么我改了环境变量却没生效」 */
       source: loadConfig(process.env).turn ? 'env' : creds ? 'file' : 'none',
+      /**
+       * 格式问题（可空数组 = 形状都对）。
+       * **只有消息，没有原值** —— secret 绝不能进渲染层（那里会被截图/录屏带走）。
+       */
+      formatIssues,
+      formatHard: hasHardFormatIssue(formatIssues),
       ...embeddedServer.status,
     };
   });
@@ -311,12 +322,29 @@ function registerTurnHandlers(): void {
     const id = String(keyId ?? '').trim();
     const secret = String(keySecret ?? '').trim();
     // 成对校验：**只给一个按「没配」处理**，与信令 parseTurn 同一口径
-    if (!id || !secret) return { ok: false, error: 'Key ID 与 API Token 必须成对填写' };
+    if (!id || !secret) return { ok: false, error: 'Key ID 与 Key Secret 必须成对填写' };
+    /**
+     * 存盘**之前**先体检。
+     *
+     * 为什么不「存下来再说」：填错时绿灯会亮，用户会以为配好了，
+     * 真正炸的地方在几分钟后连不上的时候，届时报的是 401/404 —— 与病因无关。
+     * 当场拒掉 + 说清哪个字段、错在哪，处置成本差一个数量级。
+     *
+     * ⚠️ 只拒**确定的错**（如邮箱、把 token 填进 secret）。「形状可疑但可能是
+     * Cloudflare 改了格式」一律放行 —— 误报会让用户不敢用真凭据。
+     */
+    const issues = inspectTurnFormat({ keyId: id, keySecret: secret });
+    const hard = hasHardFormatIssue(issues);
+    if (hard) {
+      return { ok: false, error: issues.filter((i) => !i.suspect).map((i) => i.message).join(' ') };
+    }
     if (!saveTurnCredentials({ keyId: id, keySecret: secret }, loadTurnAccountId())) {
       return { ok: false, error: '写不进本地配置（userData 不可写）' };
     }
     await restartEmbeddedServerWithTurn();
-    return { ok: true, keyIdMasked: maskKeyId(id) };
+    // 「可疑但已存」也带一句话回去，界面照样说，但不拦
+    const soft = issues.filter((i) => i.suspect).map((i) => i.message).join(' ');
+    return { ok: true, keyIdMasked: maskKeyId(id), warning: soft || undefined };
   });
 
   ipcMain.handle('turn:clear', async () => {

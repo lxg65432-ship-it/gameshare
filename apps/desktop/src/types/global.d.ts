@@ -132,6 +132,19 @@ export interface TurnUiStatus {
   turnState: 'off' | 'ready' | 'error';
   turnIssued: number;
   detail: string | null;
+  /**
+   * 格式问题（2026-10-05 补）。空数组 = 形状都对。
+   *
+   * 起因：`turnState === 'ready'` 只代表「读到了一对非空字符串」，
+   * 而实测过把**账号 API Token** 填进 secret 格也照样绿灯，
+   * 直到连不上才暴露成 401（病因与症状隔了一层）。
+   *
+   * ⚠️ **只有 message，没有原值** —— 这个对象会进渲染层，
+   * 渲染层会被截图/录屏带走，secret 不能出现在那里。
+   */
+  formatIssues: Array<{ field: 'keyId' | 'keySecret'; message: string; suspect: boolean }>;
+  /** 有没有「确定的错」。`suspect` 的只黄不红，避免误报把用户挡在门外。 */
+  formatHard: boolean;
 }
 
 export interface TurnCreateResult {
@@ -150,6 +163,11 @@ export interface TurnSaveResult {
   ok: boolean;
   error?: string;
   keyIdMasked?: string;
+  /**
+   * 「形状可疑但已存」的提示。**与 error 分开**：error 是拦下来的，
+   * warning 是放过去了但把话说出来（主进程只拒确定的错，误报会挡人）。
+   */
+  warning?: string;
 }
 
 /**

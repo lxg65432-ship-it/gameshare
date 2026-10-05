@@ -16,6 +16,8 @@ import path from 'node:path';
 import {
   accountIdOf,
   clearTurnCredentialsAt,
+  hasHardFormatIssue,
+  inspectTurnFormat,
   loadTurnAccountIdFrom,
   loadTurnCredentialsFrom,
   maskKeyId,
@@ -23,7 +25,7 @@ import {
   type TurnCredentials,
 } from './turn-store';
 
-export { maskKeyId };
+export { hasHardFormatIssue, inspectTurnFormat, maskKeyId };
 export type { TurnCredentials };
 
 /**

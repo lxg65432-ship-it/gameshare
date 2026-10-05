@@ -368,19 +368,24 @@ section('建 key：result.secret（实测形状）与 result.key（文档形状�
     }
   }
 
-  // 真账号的真实形状（2026-10-05 实录）
+  // 真账号的**真实形状**（2026-10-05 对着真响应核过字段名与类型）。
+  // ⚠️ **值是编造的，只保形状**：uid 32 位小写 hex、secret 64 位小写 hex。
+   // 判据要验的是形状（secret 还是 key、字段在不在），不需要具体那串 ——
+  // 而且**绝不能把真凭据写进仓库**：2026-10-05 push 时被 GitHub push protection
+  // 当成 Cloudflare User API Token 拦下来（GH013）。
+  // 形状的真实性由「对着真账号核过」保证，不由「值是真的」保证。
   const realShape = await createWithResult({
-    uid: '3df8dff194a60647e0904415a1cdcf06',
+    uid: '0a1b2c3d4e5f60718293a4b5c6d7e8f9',
     name: 'gameshare',
-    secret: 'fde7feea1110c2c0151a5220562a3c9e5aa5773659529c70a44caefa3593f5f2',
+    secret: '1f2e3d4c5b6a79880716253443526170f9e8d7c6b5a4938271605f4e3d2c1b0a',
     created: '2026-10-05T00:14:22.943Z',
     modified: '2026-10-05T00:14:22.943Z',
   });
   check('真形状（secret）⇒ ok=true', realShape.ok === true, JSON.stringify(realShape.error));
-  check('真形状取到 keyId', realShape.keyId === '3df8dff194a60647e0904415a1cdcf06');
+  check('真形状取到 keyId', realShape.keyId === '0a1b2c3d4e5f60718293a4b5c6d7e8f9');
   check(
     '真形状取到 keySecret（64 位）',
-    realShape.keySecret === 'fde7feea1110c2c0151a5220562a3c9e5aa5773659529c70a44caefa3593f5f2',
+    realShape.keySecret === '1f2e3d4c5b6a79880716253443526170f9e8d7c6b5a4938271605f4e3d2c1b0a',
   );
 
   // 文档形状也不能退化
@@ -408,6 +413,267 @@ section('建 key：result.secret（实测形状）与 result.key（文档形状�
   // 形状彻底变了：不能静默当成功
   const alien = await createWithResult({ id: 'x', value: 'y' });
   check('完全陌生的形状 ⇒ ok=false', alien.ok === false);
+}
+
+/* ------------------------------------------------------------------ *
+ * 10. 凭据格式体检（2026-10-05 补的真盲区）
+ *
+ * 起因：`parsePersisted` 只认「两个字段都在且非空」，所以**任何一对非空字符串
+ * 都能过**，界面也照样绿灯。实测踩到：用户把 Cloudflare **账号 API Token**
+ * （`cfut_…`，53 位含下划线）填进 secret 格，界面说「已就绪」，
+ * 直到真连不上才暴露成 `401 invalid bearer token` —— 症状与病因隔了一层。
+ * ------------------------------------------------------------------ */
+
+section('格式体检：确定的错（邮箱 / token 填错格）');
+
+/**
+ * 一对**形状正确**的凭据 —— 必须判成「无问题」，否则会误报把用户挡在门外。
+ *
+ * ⚠️ **值是编造的，只保形状**（uid 32 位小写 hex / secret 64 位小写 hex）。
+ * 形状的真实性由「对着真账号核过」保证，不由「值是真的」保证。
+ * 2026-10-05 教训：这里原本填的是真 uid + 真 secret，
+ * push 时被 GitHub push protection 当成 Cloudflare User API Token 拦下（GH013）。
+ * **判据永远不许含真凭据** —— 它会进仓库、进 CI 日志、进别人的 clone。
+ */
+const GOOD = {
+  keyId: '0a1b2c3d4e5f60718293a4b5c6d7e8f9',
+  keySecret: '1f2e3d4c5b6a79880716253443526170f9e8d7c6b5a4938271605f4e3d2c1b0a',
+};
+
+/**
+ * 「填错格」那一对的**形状**（keyId 对、keySecret 是 Cloudflare 账号 token）。
+ * 同样只用形状：token 那串是编的，但前缀与字符集要像（`cfut_` + 混合大小写）。
+ */
+const WRONG_SHAPE = {
+  keyId: GOOD.keyId,
+  keySecret: 'cfut_EXAMPLEnotARealTokenAbCdEfGhIjKlMnOpQrStUvWxYz0123456789',
+};
+
+{
+  const good = GOOD;
+  check('形状正确的凭据 ⇒ 零问题', S.inspectTurnFormat(good).length === 0, JSON.stringify(S.inspectTurnFormat(good)));
+  check('形状正确的凭据 ⇒ 无硬错', S.hasHardFormatIssue(S.inspectTurnFormat(good)) === false);
+
+  // 填错格的那一类（原本绿灯通过）
+  const wrongSecret = WRONG_SHAPE;
+  const wIssues = S.inspectTurnFormat(wrongSecret);
+  check('把账号 token 填进 secret ⇒ 抓到 1 条', wIssues.length === 1, JSON.stringify(wIssues));
+  check('  且指明是 keySecret 那一格', wIssues[0]?.field === 'keySecret');
+  check('  且是硬错（红灯，不是黄灯）', S.hasHardFormatIssue(wIssues) === true);
+  check(
+    '  且消息点出「API Token ≠ TURN key secret」',
+    /API Token/.test(wIssues[0]?.message ?? '') && /secret/.test(wIssues[0]?.message ?? ''),
+    wIssues[0]?.message,
+  );
+  check(
+    '  消息里不含用户填的原值（不能泄进界面/日志）',
+    !String(wIssues[0]?.message).includes('cfut_EXAMPLEnotAReal'),
+  );
+
+  // 账号 ID 填成登录邮箱：症状最迷惑（404 而不是 401），单独点出来
+  const mailId = { keyId: 'lxg65432@gmail.com', keySecret: good.keySecret };
+  const mIssues = S.inspectTurnFormat(mailId);
+  check('keyId 填邮箱 ⇒ 抓到 1 条', mIssues.length === 1, JSON.stringify(mIssues));
+  check('  指明是 keyId 那一格', mIssues[0]?.field === 'keyId');
+  check('  是硬错', S.hasHardFormatIssue(mIssues) === true);
+  check(
+    '  消息点出「邮箱」并给出正确来源（控制台网址那串）',
+    /邮箱/.test(mIssues[0]?.message ?? '') && /dash\.cloudflare\.com/.test(mIssues[0]?.message ?? ''),
+    mIssues[0]?.message,
+  );
+}
+
+section('格式体检：可疑的错只黄不红（不许误报挡人）');
+
+{
+  const good = GOOD;
+  // 长度不对但「看起来像」某种串 —— 只能 suspect。
+  // 理由：Cloudflare 若改了格式我们会误报，误报会让用户不敢用真凭据。
+  const shortSecret = { keyId: good.keyId, keySecret: 'deadbeef' };
+  const sIssues = S.inspectTurnFormat(shortSecret);
+  check('secret 太短 ⇒ 抓到 1 条', sIssues.length === 1, JSON.stringify(sIssues));
+  check('  但只是 suspect（黄灯）', sIssues[0]?.suspect === true);
+  check('  hasHardFormatIssue 为 false（放行）', S.hasHardFormatIssue(sIssues) === false);
+
+  const oddId = { keyId: 'NOT-HEX-AT-ALL', keySecret: good.keySecret };
+  const oIssues = S.inspectTurnFormat(oddId);
+  check('keyId 非十六进制 ⇒ suspect 而非硬错', oIssues[0]?.suspect === true);
+  check('  不含 @ 所以不是邮箱那类', !/@/.test(oIssues[0]?.message ?? ''));
+
+  // 两格都错 ⇒ 两条都报，别只报第一个（用户要一次改完）
+  const bothWrong = S.inspectTurnFormat({ keyId: 'a@b.com', keySecret: 'short' });
+  check('两格都错 ⇒ 两条都报', bothWrong.length === 2, JSON.stringify(bothWrong.map((i) => i.field)));
+  check('  两个 field 各一个', new Set(bothWrong.map((i) => i.field)).size === 2);
+
+  // 没配 ⇒ 零问题（不是「有问题」）
+  check('null ⇒ 零问题', S.inspectTurnFormat(null).length === 0);
+
+  // 大写十六进制：Cloudflare 给的是小写，但不该因此报成错
+  const upper = S.inspectTurnFormat({
+    keyId: good.keyId.toUpperCase(),
+    keySecret: good.keySecret.toUpperCase(),
+  });
+  check('大写十六进制不算错（宽容）', S.hasHardFormatIssue(upper) === false, JSON.stringify(upper));
+}
+
+section('★ 绿灯必须被格式问题压掉：绿灯 + 废凭据是这个盲区的本体');
+
+{
+  // 界面上的判定：`formatHard` 存在时状态灯不许再显示 ok。
+  // 这条是静态断言，但它守的正是「界面怎么用这两个字段」。
+  check('App 读了 formatIssues', /turnUi\?\.formatIssues/.test(appSrc));
+  check('App 读了 formatHard', /turnUi\?\.formatHard\s*===\s*true/.test(appSrc));
+  check(
+    '状态灯把 formatHard 排在 turnState 之前（红灯压绿灯）',
+    /turnFormatHard\s*\r?\n\s*\?\s*'warn'[\s\S]{0,160}turnState === 'ready'/.test(appSrc),
+    '顺序反了绿灯会赢，而 formatHard 恰恰是更确定的信息',
+  );
+  check('formatHard 时用「凭据格式不对」这个状态名', /turn\.stateBadFormat/.test(appSrc));
+  check('i18n zh 里有 turn.stateBadFormat', /'turn\.stateBadFormat':\s*'凭据格式不对'/.test(i18nSrc));
+  check(
+    'i18n en 里有 turn.stateBadFormat',
+    /'turn\.stateBadFormat':\s*'credential format is wrong'/.test(i18nSrc),
+  );
+
+  // turn:get / turn:save 两处都要用同一个判据，否则两处说法会打架
+  check('main.ts 的 turn:get 调了 inspectTurnFormat', /inspectTurnFormat\(creds\)/.test(mainSrc));
+  check(
+    'main.ts 的 turn:save 也调了它（存盘前拒）',
+    /inspectTurnFormat\(\{ keyId: id, keySecret: secret \}\)/.test(mainSrc),
+  );
+  check(
+    'turn:save 先体检再存盘（顺序不能反）',
+    mainSrc.indexOf('inspectTurnFormat') < mainSrc.indexOf('saveTurnCredentials({ keyId: id'),
+  );
+
+  // 安全：formatIssues 只带 message，不带原值
+  const getBody = mainSrc.match(/ipcMain\.handle\('turn:get'[\s\S]*?\n {2}\}\);/)?.[0] ?? '';
+  check('取到了 turn:get 的返回体', getBody.length > 0);
+  check('turn:get 回报 formatIssues', /formatIssues,/.test(getBody));
+  check('turn:get 回报 formatHard', /formatHard: hasHardFormatIssue/.test(getBody));
+  check(
+    'turn:get **不把凭据原值塞进 formatIssues**',
+    !/formatIssues:\s*creds\b/.test(getBody),
+  );
+  check(
+    'TurnFormatIssue 只有 field / message / suspect 三个字段',
+    (() => {
+      const m = /interface TurnFormatIssue \{([\s\S]*?)\n\}/.exec(storeSrc);
+      if (!m) return false;
+      const fields = [...m[1].matchAll(/^\s{2}(\w+)\??:/gm)].map((x) => x[1]);
+      return (
+        fields.length === 3 &&
+        fields.includes('field') &&
+        fields.includes('message') &&
+        fields.includes('suspect')
+      );
+    })(),
+  );
+}
+
+section('★ 文案不许再把 TURN key 的 secret 叫「API Token」');
+
+{
+  // 2026-10-05 踩坑的根源：原文写「API Token（TURN key 的 secret）」，
+  // 用户据此把**账号 token** 填进了 secret 格。文案本身就是病因的一部分。
+  check(
+    'zh 的 secret 占位符不再出现「API Token」',
+    !/'turn\.keySecretPlaceholder':\s*'[^']*API Token/.test(i18nSrc),
+  );
+  check(
+    'en 的 secret 占位符不再出现「API token」',
+    !/'turn\.keySecretPlaceholder':\s*'[^']*API token/i.test(i18nSrc),
+  );
+  check(
+    'zh 的占位符点明位数（64 位十六进制）',
+    /'turn\.keySecretPlaceholder':\s*'[^']*64 位十六进制/.test(i18nSrc),
+  );
+  check(
+    'en 的占位符点明位数（64 hex chars）',
+    /'turn\.keySecretPlaceholder':\s*'[^']*64 hex chars/.test(i18nSrc),
+  );
+  check(
+    'zh 的 Key ID 占位符点明位数',
+    /'turn\.keyIdPlaceholder':\s*'[^']*32 位十六进制/.test(i18nSrc),
+  );
+  check(
+    'zh 的账号 ID 提示给出正确取法（控制台网址那串）',
+    /'turn\.accountIdTitle':[\s\S]{0,140}dash\.cloudflare\.com/.test(i18nSrc),
+  );
+  check(
+    '两个 token 位置的措辞区分开了（账号 token vs key secret）',
+    /'turn\.apiTokenPlaceholder':\s*'API Token（需 Calls Write 权限）'/.test(i18nSrc) &&
+      /'turn\.keySecretPlaceholder':\s*'TURN Key Secret/.test(i18nSrc),
+  );
+  check(
+    'zh 的手工填开关不再混称',
+    /'turn\.manualToggle':\s*'[^']*TURN key/.test(i18nSrc) &&
+      !/'turn\.manualToggle':\s*'[^']*API [Tt]oken/.test(i18nSrc),
+  );
+  check(
+    'en 的手工填开关不再混称',
+    /'turn\.manualToggle':\s*'[^']*TURN key/.test(i18nSrc) &&
+      !/'turn\.manualToggle':\s*'[^']*API token/i.test(i18nSrc),
+  );
+}
+
+section('★ 判据自己不许含真凭据（2026-10-05 push 被 GH013 拦过）');
+
+{
+  // 这条是**元判据**：它守的是判据自己。
+  //
+  // 起因：2026-10-05 我把真 uid + 真 keySecret 写进了本文件当「真形状」样本，
+  // push 时 GitHub push protection 判定为 Cloudflare User API Token 并拒绝（GH013）。
+  // 后果不只是「推不上去」——**凭据进了 git 历史就等于公开了**（GitHub 会把它索引进
+  // Secret Scanning，即使后来删掉提交也已在对象库里）。
+  //
+  // 所以判据里只许出现**形状**：32 位小写 hex / 64 位小写 hex / 带 `cfut_` 前缀的串。
+  // 形状的真实性靠「对着真账号核过」，不靠「值是真的」。
+  const selfSrc = read('scripts/check-turn-ui.mjs');
+
+  check('取到了本文件自己的源码', selfSrc.length > 0);
+
+  // 判据里出现的 32/64 位 hex 串必须是「明显的假值」——
+  // 真的那种是随机的，没法用模式区分，所以退一步查两个具体特征：
+  // ①不得出现 Cloudflare API Token 的真实前缀 + 长随机尾巴
+  const cfTokens = selfSrc.match(/cfut_[A-Za-z0-9_-]{20,}/g) ?? [];
+  check(
+    '判据里没有真实的 Cloudflare token（只有带 EXAMPLE 标记的假值）',
+    cfTokens.every((t) => /EXAMPLE|example/.test(t)),
+    cfTokens.filter((t) => !/EXAMPLE|example/.test(t)).join(' '),
+  );
+
+  // ② 长 hex 串（>=32 位）必须带注释说明是编造的；本文件的约定是集中两个常量
+  check('凭据样本集中成 GOOD / WRONG_SHAPE 两个常量', /const GOOD = \{/.test(selfSrc) && /const WRONG_SHAPE = \{/.test(selfSrc));
+  check('GOOD 上方有「值是编造的」警告', /值是编造的，只保形状/.test(selfSrc));
+
+  // ③ **两个字段都要查**，且查的是「可读递增序列」这个真特征。
+  //    ⚠️ 第一版只查了 keyId ⇒ keySecret 换成随机值也不红，那是**恒真的一半**。
+  //    真凭据是随机的，编造值可以刻意做成递增/带标记 —— 两者一眼能分。
+  const goodBlock = /const GOOD = \{[\s\S]*?\n\};/.exec(selfSrc)?.[0] ?? '';
+  const goodKeyId = /keyId: '([0-9a-f]+)'/.exec(goodBlock)?.[1] ?? '';
+  const goodSecret = /keySecret: '([0-9a-f]+)'/.exec(goodBlock)?.[1] ?? '';
+
+  check('取到了 GOOD 块', goodBlock.length > 0);
+  check('GOOD.keyId 恰为 32 位', goodKeyId.length === 32, String(goodKeyId.length));
+  check('GOOD.keySecret 恰为 64 位', goodSecret.length === 64, String(goodSecret.length));
+  check(
+    'GOOD 两个字段都是假值（递增序列，不是随机）',
+    goodKeyId === '0a1b2c3d4e5f60718293a4b5c6d7e8f9' &&
+      goodSecret === '1f2e3d4c5b6a79880716253443526170f9e8d7c6b5a4938271605f4e3d2c1b0a',
+    `keyId=${goodKeyId.slice(0, 8)}… secret=${goodSecret.slice(0, 8)}…`,
+  );
+  check(
+    'GOOD.keyId 是可读递增序列（说明是编的）',
+    /keyId: '0a1b2c3d4e5f/.test(selfSrc),
+    '真 uid 是随机的，不会是递增序列',
+  );
+  check(
+    'GOOD.keySecret 是可读递增序列（说明是编的）',
+    /keySecret: '1f2e3d4c5b6a7988/.test(selfSrc),
+    '真 secret 是随机的，不会是递增序列',
+  );
+  check('WRONG_SHAPE 的 token 带 EXAMPLE 标记', /cfut_EXAMPLE/.test(selfSrc));
 }
 
 console.log(`\n${'═'.repeat(58)}`);

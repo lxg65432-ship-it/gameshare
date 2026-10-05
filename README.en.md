@@ -251,14 +251,15 @@ panel and look for these two lines (the client's own log output is in Chinese):
 ### Enabling TURN
 
 Relay traffic goes through Cloudflare and is **billed by egress**
-($0.05/GB, the first 1,000 GB each month is free). Everything still works
-without it — you just won't connect on the four network types listed above.
+($0.05/GB, the first 1,000 GB each month is free — TURN and SFU share that one
+allowance; STUN is free and unlimited). Everything still works without it —
+you just won't connect on the four network types listed above.
 
 **Shortest path: two fields in the app (since 1.5.0)**
 
 1. Open the client → expand the "Local service" panel → find "TURN relay";
-2. Fill in two fields: your **Cloudflare account ID** (shown on the right of
-   the dashboard) and an **API token with the Calls Write permission**;
+2. Fill in two fields: your **Cloudflare account ID** and an **API token with
+   the Calls Write permission**;
 3. Click "Set up automatically". The app calls Cloudflare's API to create a
    TURN key, stores it on this machine, and **reuses the same pair on every
    start — no need to fill it in again**.
@@ -274,16 +275,52 @@ purpose afterwards). The TURN key secret *is* stored locally — it is a
 > Which also means: **the host pays the relay traffic** for everyone who
 > connects.
 
+#### What the two values are, and where to get them
+
+⚠️ **Three different things here are called "token" or "ID"** — swapping them
+produces "the panel says ready, but the connection fails with 401 or 404",
+which is hard to trace backwards.
+
+| Field | What it is | Shape | Where to get it |
+|---|---|---|---|
+| **Cloudflare account ID** | Account identifier, **only used to call the management API** | **32 hex chars** | The string after `dash.cloudflare.com/` in the dashboard URL, or the right sidebar. **Not your login email** — an email makes the gateway return 404 |
+| **API token** (for creating the key) | Account-level credential, **can only create/delete TURN keys** | A random string (like `cfut_…`) | Dashboard → avatar → My Profile → **API Tokens** → Create Custom Token. The three permission columns are `Account` / `Cloudflare Calls` / `Edit`; under Account Resources, include your own account; **leave "Client IP Address Filtering" empty**; leave TTL empty |
+| **TURN Key ID** | The id of the created key (`uid` in the response) | **32 hex chars** | In the create response, or the TURN page in the dashboard |
+| **TURN Key Secret** | The long-lived relay credential (the **`secret`** field in the response) | **64 hex chars** | Same place — **returned only at creation**, cannot be fetched afterwards |
+
+**⚠️ The account API token and the TURN Key Secret are entirely different
+things**: the former is a temporary pass to get in (used once, then discarded),
+the latter is the account password for relaying (used on every session).
+Swapping them is the most common mistake — the app now rejects it on the spot
+and names the offending field.
+
+**Getting the pair by hand (skipping the app's automatic setup)**
+
+In PowerShell (`\` is **not** a line continuation there — write it on one line;
+and `curl` must be written as `curl.exe`):
+
+```powershell
+curl.exe -X POST "https://api.cloudflare.com/client/v4/accounts/<your 32-hex account ID>/calls/turn_keys" -H "Authorization: Bearer <your API token>" -H "Content-Type: application/json" -d '{\"name\":\"gameshare\"}'
+```
+
+`result.uid` → **TURN Key ID**, `result.secret` → **TURN Key Secret**.
+(Field names per real responses: the official docs say `key`, the actual
+response says `secret`.)
+
+> **Delete that API token in Cloudflare afterwards.** Its only purpose was
+> creating the key; the app only ever uses the TURN Key ID + Secret at runtime.
+> Keeping it around is a way for someone to delete all your keys.
+
 **Alternative: enter an existing key manually**
 
-Already created one in the dashboard? Expand "I already have a Key ID / API
-token" and fill in the **Turn Token ID** and the **API token** (the key secret).
+Already created one? Expand "I already have a TURN key — enter it manually" and
+fill in **TURN Key ID (32 hex chars)** and **TURN Key Secret (64 hex chars)**.
 
 **Or: keep using environment variables (nothing written to disk)**
 
 ```powershell
-$env:TURN_KEY_ID     = "your Turn Token ID"
-$env:TURN_KEY_SECRET = "your API Token"
+$env:TURN_KEY_ID     = "TURN Key ID (32 hex chars)"
+$env:TURN_KEY_SECRET = "TURN Key Secret (64 hex chars)"
 ```
 
 Launch the client from that window. **Environment variables take priority over
@@ -297,6 +334,19 @@ can spend your quota on someone else's behalf.
 The log panel states whether TURN was available for a session; check that line
 first when a connection fails. Without TURN configured the app **does not error**
 — it just stays pure P2P (which is what most people need anyway).
+
+**How to tell TURN is actually being used**: "ready" in the panel only means the
+credentials were read and their format is valid — **not** that the path works.
+Test from two networks that can't connect directly, then look for
+`TURN 凭证已签发` (the credential path works) and `relay` in the ICE candidate
+breakdown (**relaying is really in use**). `srflx` alone does not count — that
+just means the direct path is still being attempted.
+
+**Known limits**: each relay allocation has Cloudflare-side rate caps
+(unique IP >5/s, 5~10 kpps, 50~100 Mbps). If a corporate firewall blocks TURN,
+allow `2a06:98c1:3200::1`, `2606:4700:48::1`, `141.101.90.1`, `162.159.207.1`.
+TURN nodes sit outside Cloudflare's China Network: reachable from China, but
+with higher latency.
 
 ## Known limitations
 

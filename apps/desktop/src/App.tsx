@@ -339,6 +339,9 @@ export default function App() {
       if (res.ok) {
         setTurnKeyIdInput('');
         setTurnKeySecretInput('');
+        // 「可疑但已存」也要说出来。主进程只拒确定的错，软的放行了 ——
+        // 那句话是唯一的提示，吞掉就等于没提示（界面上的黄灯要等下次刷新才亮）。
+        setTurnError(res.warning ?? '');
         refreshTurn();
         return;
       }
@@ -367,6 +370,16 @@ export default function App() {
   const turnIssued = turnUi?.turnIssued ?? 0;
   const turnSource = turnUi?.source ?? 'none';
   const turnKeyIdMasked = turnUi?.keyIdMasked ?? '';
+  /**
+   * 格式问题（2026-10-05 补）。
+   *
+   * **红灯压过绿灯**：格式不对时 `turnState` 仍会是 `ready`
+   * （`#turnState()` 只看「有没有配」+「上次签发有没有报错」），
+   * 而实测过「绿灯 + 一对废凭据」—— 把账号 token 填进 secret 格就是这样。
+   * 所以这里单独判一次，`formatHard` 存在时状态灯一律按错显示。
+   */
+  const turnFormatIssues = turnUi?.formatIssues ?? [];
+  const turnFormatHard = turnUi?.formatHard === true;
 
   const serverUrlRef = useRef(serverUrl);
   serverUrlRef.current = serverUrl;
@@ -1759,16 +1772,24 @@ export default function App() {
                       <span className="tunnel__title">{t('turn.title')}</span>
                       <span
                         className={`dot dot--${
-                          turnState === 'ready' ? 'ok' : turnState === 'error' ? 'warn' : 'idle'
+                          turnFormatHard
+                            ? 'warn'
+                            : turnState === 'ready'
+                              ? 'ok'
+                              : turnState === 'error'
+                                ? 'warn'
+                                : 'idle'
                         }`}
                       />
                       <span className="collapse__state">
                         {t(
-                          turnState === 'ready'
-                            ? 'turn.stateReady'
-                            : turnState === 'error'
-                              ? 'turn.stateError'
-                              : 'turn.stateOff',
+                          turnFormatHard
+                            ? 'turn.stateBadFormat'
+                            : turnState === 'ready'
+                              ? 'turn.stateReady'
+                              : turnState === 'error'
+                                ? 'turn.stateError'
+                                : 'turn.stateOff',
                         )}
                         {turnIssued > 0 && fmt('turn.issued', { n: turnIssued })}
                       </span>
@@ -1777,6 +1798,17 @@ export default function App() {
                     {turnSource === 'env' && (
                       <p className="hint hint--dim">{t('turn.fromEnv')}</p>
                     )}
+
+                    {/* 格式问题排在 turnError 之前：它比「签发失败」更接近病因
+                        （填错就填错了，不会因为重试而变好）。 */}
+                    {turnFormatIssues.map((issue) => (
+                      <p
+                        key={issue.field}
+                        className={issue.suspect ? 'hint hint--dim' : 'hint hint--warn'}
+                      >
+                        {issue.message}
+                      </p>
+                    ))}
 
                     {turnError && <p className="hint hint--warn">{turnError}</p>}
 
