@@ -283,14 +283,23 @@ section('建 key：失败都带原因，且不抛');
   const fnSrc = cfgSrc.slice(fnStart, fnEnd);
   check('取到 createTurnKey', fnStart > 0 && fnEnd > fnStart);
 
+  // firstNonEmptyString 是 createTurnKey 的依赖，也在同一文件里，一起切出来。
+  // 漏了它 bundle 会 ReferenceError —— 判据自己先崩，比红更难看。
+  const helperStart = cfgSrc.indexOf('function firstNonEmptyString');
+  const helperEnd = helperStart > 0 ? cfgSrc.indexOf('\n}', helperStart) + 2 : 0;
+  check('取到 firstNonEmptyString', helperStart > 0 && helperEnd > helperStart);
+  const helperSrc = helperStart > 0 ? cfgSrc.slice(helperStart, helperEnd) : '';
+
   const outFile = path.join(root, '.cache', 'check-turn-ui-createkey.cjs');
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   esbuild.buildSync({
     stdin: {
       contents: `
         const CREATE_TIMEOUT_MS = 10_000;
+        const CF_TURN_KEYS = 'https://api.cloudflare.com/client/v4';
+        ${helperSrc}
         ${fnSrc.replace('export async function', 'async function')}
-        module.exports = { createTurnKey };
+        module.exports = { createTurnKey, firstNonEmptyString };
       `,
       resolveDir: root,
       loader: 'ts',
@@ -301,7 +310,13 @@ section('建 key：失败都带原因，且不抛');
     format: 'cjs',
     logLevel: 'silent',
   });
-  const { createTurnKey } = require(outFile);
+  const { createTurnKey, firstNonEmptyString } = require(outFile);
+
+  // firstNonEmptyString 自身
+  check('首个非空字符串胜出', firstNonEmptyString('a', 'b') === 'a');
+  check('空串不算数（会跳过）', firstNonEmptyString('', '  ', 'c') === 'c');
+  check('两边都不是字符串 ⇒ null', firstNonEmptyString(undefined, 123) === null);
+  check('非字符串的 secret 混不过去', firstNonEmptyString(undefined, { key: 'x' }) === null);
 
   const empty = await createTurnKey('', '');
   check('空账号 + 空 token ⇒ ok=false', empty.ok === false);
@@ -317,6 +332,82 @@ section('建 key：失败都带原因，且不抛');
   check('真实请求失败时也不抛（返回 ok=false）', net.ok === false);
   check('网络失败带可显示原因', typeof net.error === 'string' && net.error.length > 0, JSON.stringify(net.error));
   check('失败时不返回任何凭据', net.keyId === undefined && net.keySecret === undefined);
+}
+
+/* ------------------------------------------------------------------ *
+ * 9. 建 key 响应解析 —— ★ 2026-10-05 修的真洞
+ *
+ * 官方文档写 `result.key`，**真实响应里叫 `result.secret`**（对真账号实测确认）。
+ * 只读 key 的话，key 建成功了却报「接口形状可能变了」——
+ * 这是个**把成功报成失败**的洞，比拿不到凭据还难查（用户会以为是自己 token 的问题）。
+ *
+ * 这里拿假 fetch 把整段跑起来，两种形状各喂一次。
+ * ------------------------------------------------------------------ */
+
+section('建 key：result.secret（实测形状）与 result.key（文档形状）都认');
+
+{
+  check('源码读了 result.secret', /result\?\.secret/.test(cfgSrc), '不读它 = 对真账号必然失败');
+  check('仍兼容文档里的 result.key', /result\?\.key/.test(cfgSrc), '只留 secret 会让接口再改版时静默失败');
+
+  const realFetch = globalThis.fetch;
+  // 第 8 节的 require 绑在那个块里，这里再取一次（同一个 bundle 文件）
+  const { createTurnKey: createKey } = require(
+    path.join(root, '.cache', 'check-turn-ui-createkey.cjs'),
+  );
+  async function createWithResult(result) {
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, result }),
+    });
+    try {
+      return await createKey('acct', 'token');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  // 真账号的真实形状（2026-10-05 实录）
+  const realShape = await createWithResult({
+    uid: '3df8dff194a60647e0904415a1cdcf06',
+    name: 'gameshare',
+    secret: 'fde7feea1110c2c0151a5220562a3c9e5aa5773659529c70a44caefa3593f5f2',
+    created: '2026-10-05T00:14:22.943Z',
+    modified: '2026-10-05T00:14:22.943Z',
+  });
+  check('真形状（secret）⇒ ok=true', realShape.ok === true, JSON.stringify(realShape.error));
+  check('真形状取到 keyId', realShape.keyId === '3df8dff194a60647e0904415a1cdcf06');
+  check(
+    '真形状取到 keySecret（64 位）',
+    realShape.keySecret === 'fde7feea1110c2c0151a5220562a3c9e5aa5773659529c70a44caefa3593f5f2',
+  );
+
+  // 文档形状也不能退化
+  const docShape = await createWithResult({
+    uid: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    key: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  });
+  check('文档形状（key）⇒ ok=true', docShape.ok === true, JSON.stringify(docShape.error));
+  check('文档形状取到 keySecret', docShape.keySecret?.startsWith('bbbb') === true);
+
+  // 两个都在 ⇒ secret 优先（实测形状优先，别让文档形状的旧值覆盖）
+  const bothShape = await createWithResult({
+    uid: 'cccccccccccccccccccccccccccccccc',
+    key: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+    secret: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  });
+  check('两个都在时 secret 优先', bothShape.keySecret?.startsWith('eeee') === true);
+
+  // 缺 secret 也没有 key ⇒ 必须失败（不能返回半个凭据）
+  const missing = await createWithResult({ uid: 'ffffffffffffffffffffffffffffffff' });
+  check('只有 uid ⇒ ok=false', missing.ok === false);
+  check('只有 uid 时不返回半个凭据', missing.keyId === undefined && missing.keySecret === undefined);
+  check('形状不认识时报的错点名 secret', /secret/.test(missing.error ?? ''), missing.error);
+
+  // 形状彻底变了：不能静默当成功
+  const alien = await createWithResult({ id: 'x', value: 'y' });
+  check('完全陌生的形状 ⇒ ok=false', alien.ok === false);
 }
 
 console.log(`\n${'═'.repeat(58)}`);

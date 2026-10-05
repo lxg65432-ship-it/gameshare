@@ -111,7 +111,13 @@ export async function createTurnKey(
     const raw = (await res.json().catch(() => null)) as
       | {
           success?: unknown;
-          result?: { uid?: unknown; key?: unknown };
+          /**
+           * ⚠️ **字段名 `key` 是文档里的，真实响应里叫 `secret`** ——
+           * 2026-10-05 对着真账号建 key 实测确认。只读 `key` 会永远拿不到，
+           * 而 `createTurnKey` 明明建成功了却报「接口形状可能变了」，
+           * 是个**把成功报成失败**的洞。两个都认。
+           */
+          result?: { uid?: unknown; key?: unknown; secret?: unknown };
           errors?: Array<{ message?: unknown }>;
         }
       | null;
@@ -128,13 +134,14 @@ export async function createTurnKey(
     }
 
     const uid = raw?.result?.uid;
-    const key = raw?.result?.key;
-    if (typeof uid !== 'string' || uid.trim() === '' || typeof key !== 'string' || key.trim() === '') {
+    // 文档写 key，实测是 secret。两个都认，谁有算谁的（2026-10-05 实测）
+    const secret = firstNonEmptyString(raw?.result?.secret, raw?.result?.key);
+    if (typeof uid !== 'string' || uid.trim() === '' || secret === null) {
       // 这条不能静默：响应形状变了却照样返回「成功」，用户会以为配好了其实没配
-      return { ok: false, error: '响应里没有 uid / key —— Cloudflare 接口形状可能变了' };
+      return { ok: false, error: '响应里没有 uid / secret —— Cloudflare 接口形状可能变了' };
     }
 
-    return { ok: true, keyId: uid.trim(), keySecret: key.trim() };
+    return { ok: true, keyId: uid.trim(), keySecret: secret };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     return {
@@ -146,4 +153,12 @@ export async function createTurnKey(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** 取第一个非空字符串，全都不是字符串或都空 ⇒ null */
+function firstNonEmptyString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
 }
